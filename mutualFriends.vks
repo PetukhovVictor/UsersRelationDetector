@@ -1,0 +1,14 @@
+var users = [<?=$source_friends?>];
+var mutual_friends_all = [];
+while (users.length != 0) {
+	var user = users.pop();
+	var mutual_friends = API.friends.getMutual({
+		"source_uid": user,
+		"target_uids":"<?=$target_friends?>"
+	});
+	mutual_friends_all.push({
+		"id": user,
+		"common_friends": mutual_friends
+	});
+}
+return mutual_friends_all;
