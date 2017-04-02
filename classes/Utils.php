@@ -35,7 +35,7 @@ class Utils {
         );
     }
 
-    static public function swapLastDepthMultidimensionalArray($array, $swapped_multidimensional_array, $level = 0) {
+    static public function swapLastDepthsMultidimensionalArray($array, $swapped_multidimensional_array, $level = 0) {
         foreach ($array as $key => $sub_array) {
             if (self::getArrayDepth($sub_array) > 2) {
                 $swapped_multidimensional_array[$key] = self::swapLastDepthMultidimensionalArray(
@@ -55,9 +55,6 @@ class Utils {
                         }
                     }
                 } else {
-                    if (count($sub_array)) {
-                        continue;
-                    }
                     foreach ($sub_array as $value) {
                         if (!isset($swapped_multidimensional_array[$value])) {
                             $swapped_multidimensional_array[$value] = array();
@@ -71,7 +68,15 @@ class Utils {
     }
 
     static public function isMultidimensionalArray($array) {
-        return count($array) !== count($array, COUNT_RECURSIVE);
+        if (!is_array($array)) {
+            return false;
+        }
+        foreach ($array as $element) {
+            if (!is_array($element)) {
+                return false;
+            }
+        }
+        return true;
     }
 
     static public function getArrayDepth($array) {
