@@ -1,8 +1,8 @@
 <?
 
-require('../VK_API/VK.php');
+require('../../VK_API/VK.php');
 
-require('./Utils.php');
+require('./classes/Utils.php');
 
 class VKScriptExecuteAsync extends Thread {
 
@@ -106,30 +106,13 @@ class UsersRelationDetector {
      *
      * @return  array Одноуровневый ассоциативный массив вида "ID пользователя" => "Число общих друзей с ним".
      */
-    static public function mutualFriendsFormat($mutual_friends)
+    static public function buildMultidimensionalMap($common_friends, $mutual_friends_formatted)
     {
-        if (empty($mutual_friends)) {
-            return array();
-        }
-        $mutual_friends_formatted = array();
-        foreach ($mutual_friends as $friend) {
-            if (!isset($mutual_friends_formatted[$friend['id']])) {
-                $mutual_friends_formatted[$friend['id']] = array();
-            }
-            foreach ($friend['common_friends'] as $common_friend) {
-                if (is_array($common_friend)) {
-                    if ($common_friend['common_count'] != 0) {
-                        $friend_id = $common_friend['id'];
-                        $mutual_friends_formatted[$friend['id']][$friend_id] = $common_friend['common_friends'];
-                    }
-                } else {
-                    array_push($mutual_friends_formatted[$friend['id']], $common_friend);
-                }
-            }
-        }
-        foreach ($mutual_friends_formatted as $user_id => $mutual_friends) {
-            if (count($mutual_friends) == 0) {
-                unset($mutual_friends_formatted[$user_id]);
+        foreach ($common_friends as $common_friend) {
+            if (is_array($common_friend)) {
+                $mutual_friends_formatted['id' . $common_friend['id']] = self::buildMultidimensionalMap($common_friend['common_friends'], array());
+            } else {
+                array_push($mutual_friends_formatted, 'id' . $common_friend);
             }
         }
         return $mutual_friends_formatted;
@@ -177,7 +160,7 @@ class UsersRelationDetector {
         // Запоминаем кол-во уже готовых цепочек - они и будут являться смещением для 'вышестоящей рекурсии'.
         $chains_offset = count($chains);
         foreach ($array as $array_key => $child_element) {
-            // Если элемент - массив, продолжаем идти вглубь рекурсии.
+            // Если элемент - массив, продолжаем идти вглубь по рекурсии.
             if (is_array($child_element)) {
                 $chains_info = self::getChainsByMultidimensionalMap($child_element, $chains);
                 $chains = $chains_info['chains'];
@@ -246,20 +229,10 @@ class UsersRelationDetector {
         return $number;
     }
 
-    static private function removeWrapArray($multidimensional_mutual_friends) {
-        return array_reduce(
-            $multidimensional_mutual_friends,
-            function($friends_chunk1, $friends_chunk2) {
-                return $friends_chunk1 + $friends_chunk2;
-            },
-            array()
-        );
-    }
-
     static private function appendTargetUsers($chains, $user_source, $user_target) {
         foreach ($chains as &$chain) {
-            array_unshift($chain, $user_source);
-            array_push($chain, $user_target);
+            array_unshift($chain, 'id' . $user_source);
+            array_push($chain, 'id' . $user_target);
         }
         return $chains;
     }
@@ -395,16 +368,22 @@ class UsersRelationDetector {
         $friends = $this->filteringDeletedUser($friends);
         $friends_chunked = array_chunk($friends, self::FRIENDS_CHUNK_SIZE);
 
+        $query_counter = 1;
         $multidimensional_mutual_friends = array();
         foreach ($friends_chunked as $friends_chunk) {
             $friends = $this->getMutualFriends($users_target, $friends_chunk);
-            $friends = self::mutualFriendsFormat($friends);
+            // Нормализуем многомерный ассоциативный массив, полученный от VK API (преобразуем в удобный вид).
+            $friends = self::buildMultidimensionalMap($friends, array());
+            // Меняем местами последний уровень массива и препоследний
+            // (в виду специфики структуры объекта, отадаваемого VK API).
+            $friends = Utils::swapLastDepthMultidimensionalArray($friends, array());
             // Рекурсивно сливаем многомерный массив с общими друзьями (испрользуем обертку array(...), чтобы неперенумеровывать ключи).
-            $multidimensional_mutual_friends = array_merge_recursive($multidimensional_mutual_friends, array($friends));
+            $multidimensional_mutual_friends = array_merge_recursive($multidimensional_mutual_friends, $friends);
+
+            echo "Executed $query_counter query." . PHP_EOL;
+            $query_counter++;
         }
 
-        // Убираем введенную ранее обертку и сливаем массивы верхнего уровня в один.
-        $multidimensional_mutual_friends = self::removeWrapArray($multidimensional_mutual_friends);
         // Преобразуем многомерный ассоциативный массив цепочек друзей в массив массивов цепочек (линеаризуем).
         $chains_info = self::getChainsByMultidimensionalMap($multidimensional_mutual_friends);
         $chains = $chains_info['chains'];
@@ -431,9 +410,11 @@ class UsersRelationDetector {
         $friends2 = $this->filteringDeletedUser($friends2);
         $friends2_chunked = array_chunk($friends2, self::MAX_QUERIES_NUMBER);
 
+        $chunk_counter = 1;
         $multidimensional_mutual_friends = array();
         foreach ($friends1_chunked as $friends1) {
             $mutual_friends = array();
+            $query_counter = 1;
             foreach ($friends2_chunked as $friends2) {
                 $code = Utils::template($this->mutual_friends_vk_script, array(
                     'source_friends'    => implode(',', $friends2),
@@ -442,13 +423,20 @@ class UsersRelationDetector {
                 $result = $this->API('execute', array(
                     'code' => $code
                 ));
-                $result = self::mutualFriendsFormat($result['response']);
+                // Нормализуем многомерный ассоциативный массив, полученный от VK API (преобразуем в удобный вид).
+                $result = self::buildMultidimensionalMap($result['response'], array());
+                // Меняем местами последний уровень массива и препоследний
+                // (в виду специфики структуры объекта, отадаваемого VK API).
+                $result = Utils::swapLastDepthMultidimensionalArray($result, array());
+
                 $mutual_friends += $result;
+
+                echo "Executed $chunk_counter chunk, $query_counter query." . PHP_EOL;
+                $query_counter++;
             }
-            $multidimensional_mutual_friends = array_merge_recursive($multidimensional_mutual_friends, array($mutual_friends));
+            $multidimensional_mutual_friends = array_merge_recursive($multidimensional_mutual_friends, $mutual_friends);
+            $chunk_counter++;
         }
-        // Убираем введенную ранее обертку и сливаем массивы верхнего уровня в один.
-        $multidimensional_mutual_friends = self::removeWrapArray($multidimensional_mutual_friends);
         // Преобразуем многомерный ассоциативный массив цепочек друзей в массив массивов цепочек (линеаризуем).
         $chains_info = self::getChainsByMultidimensionalMap($multidimensional_mutual_friends);
         $chains = $chains_info['chains'];
