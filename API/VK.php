@@ -6,8 +6,6 @@
  * @license https://raw.github.com/vladkens/VK/master/LICENSE MIT
  */
 
-namespace VK;
-
 class VK
 {
     /**
@@ -40,12 +38,6 @@ class VK
      */
     private $auth = false;
 
-    /**
-     * Instance curl.
-     * @var Resource
-     */
-    private $ch;
-
     const AUTHORIZE_URL = 'https://oauth.vk.com/authorize';
     const ACCESS_TOKEN_URL = 'https://oauth.vk.com/access_token';
 
@@ -61,16 +53,6 @@ class VK
         $this->app_id = $app_id;
         $this->api_secret = $api_secret;
         $this->setAccessToken($access_token);
-
-        $this->ch = curl_init();
-    }
-
-    /**
-     * Destructor.
-     */
-    public function __destruct()
-    {
-        curl_close($this->ch);
     }
 
     /**
@@ -247,19 +229,17 @@ class VK
      */
     private function request($url, $method = 'GET', $postfields = array())
     {
-        curl_setopt_array($this->ch, array(
-            CURLOPT_USERAGENT => 'VK/1.0 (+https://github.com/vladkens/VK))',
+        $ch = curl_init();
+        curl_setopt_array($ch, array(
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_SSL_VERIFYPEER => false,
             CURLOPT_POST => ($method == 'POST'),
             CURLOPT_POSTFIELDS => $postfields,
             CURLOPT_URL => $url
         ));
+        $result = curl_exec($ch);
+        curl_close($ch);
 
-        return curl_exec($this->ch);
+        return $result;
     }
-
 }
-
-;
-

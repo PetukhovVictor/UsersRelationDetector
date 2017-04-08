@@ -93,4 +93,13 @@ class Utils {
 
         return $max_depth;
     }
+
+    static public function workersSync($workers) {
+        $counter = 1;
+        foreach ($workers as $worker) {
+            $worker->join();
+            echo "Executed $counter chunk." . PHP_EOL;
+            $counter++;
+        }
+    }
 }
