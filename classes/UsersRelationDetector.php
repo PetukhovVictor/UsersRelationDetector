@@ -10,14 +10,14 @@ class UsersRelationDetector {
      *
      * @type int
      */
-    const API_CALL_INTERVAL = 333333;
+    const API_CALL_INTERVAL = 400000;
 
     /**
      * Размер 'порции' пользователей, которой дозволено оперировать при работе с получением информации о пользователях через VK API.
      *
      * @type int
      */
-    const USERS_CHUNK_SIZE = 1000;
+    const USERS_CHUNK_SIZE = 100;
 
     /**
      * Размер 'порции' друзей, которой дозволено оперировать при работе с получением общих друзей через VK API.
@@ -285,10 +285,14 @@ class UsersRelationDetector {
      *
      * @return array Массив цепочек друзей с дописанными исходным и целевым пользователем.
      */
-    static private function appendTargetUsers($chains, $user_source, $user_target) {
+    static private function addEndpointUsers($chains, $users_left_side, $users_right_side) {
         foreach ($chains as &$chain) {
-            array_unshift($chain, 'id' . $user_source);
-            array_push($chain, 'id' . $user_target);
+            foreach ($users_left_side as $user) {
+                array_unshift($chain, 'id' . $user);
+            }
+            foreach ($users_right_side as $user) {
+                array_push($chain, 'id' . $user);
+            }
         }
         return $chains;
     }
@@ -328,6 +332,7 @@ class UsersRelationDetector {
         if (!isset($result['response']) && isset($result['error'])) {
             throw new Exception("Error code {$result['error']['error_code']}: {$result['error']['error_msg']}");
         } elseif (!isset($result['response'])) {
+            print_r(func_get_args());
             throw new Exception("Unknown error.");
         }
 
@@ -343,12 +348,10 @@ class UsersRelationDetector {
      *
      * @return VKAsync Worker, представляющий из себя отдельный поток выполнения.
      */
-    private function APIAsync()
+    private function APIAsync($api_args, $result_array, $linked_data = null)
     {
         usleep(self::API_CALL_INTERVAL);
-        $api_args = func_get_args();
-        $result_array = array_pop($api_args);
-        return new VKAsync($this->vk, $api_args, $result_array);
+        return new VKAsync($this->vk, $api_args, $result_array, $linked_data);
     }
 
     /**
@@ -392,14 +395,25 @@ class UsersRelationDetector {
             case 4:
                 $this->buildFourthOrderChains($friends_chunked, $workers, $result_stack, $users_target);
                 break;
+            case 5:
+                $this->buildFifthOrderChains($friends_chunked, $workers, $result_stack, $users_target);
+                break;
         }
 
         Utils::workersSync($workers);
 
         $multidimensional_mutual_friends = array();
         foreach ($result_stack as $result_chunk) {
+            // Если результат (список друзей) должен был быть связан с другим другом,
+            // дописываем его ID, создая ещё один уровень вложенности.
+            $result_chunk = !isset($result_chunk->linked_data) ? $result_chunk->data : array(
+                array(
+                    'id' => $result_chunk->linked_data['friend_id'],
+                    'common_friends' => $result_chunk->data
+                )
+            );
             // Нормализуем многомерный ассоциативный массив, полученный от VK API (преобразуем в удобный вид).
-            $result = self::buildMultidimensionalFriendsMap($result_chunk->data, array());
+            $result = self::buildMultidimensionalFriendsMap($result_chunk, array());
             // Меняем местами последний уровень массива и препоследний
             // (в виду специфики структуры объекта, отадаваемого VK API).
             $result = Utils::swapLastDepthsMultidimensionalArray($result, array());
@@ -410,7 +424,7 @@ class UsersRelationDetector {
         $chains_info = self::getChainsByMultidimensionalFriendsMap($multidimensional_mutual_friends);
         $chains = $chains_info['chains'];
         // Добавляем в каждую цепочку пользователя-источника и целевого пользователя.
-        $chains = self::appendTargetUsers($chains, $user_source, $users_target);
+        $chains = self::addEndpointUsers($chains, array($user_source), array($users_target));
         return $chains;
     }
 
@@ -443,9 +457,46 @@ class UsersRelationDetector {
                 ));
                 array_push(
                     $workers,
-                    $this->APIAsync('execute', array('code' => $vk_script_code), $result_stack)
+                    $this->APIAsync(array('execute', array('code' => $vk_script_code)), $result_stack)
                 );
             }
+        }
+    }
+
+    /**
+     * Построение цепочки пятого порядка.
+     */
+    private function buildFifthOrderChains($friends_chunked, &$workers, $result_stack, $users_target) {
+        $friends2 = $this->getFriends($users_target);
+        $friends2 = $this->filteringDeletedUser($friends2);
+
+        $counter = 1;
+        foreach ($friends2 as $friend2) {
+            echo "Try chunk friends." . PHP_EOL;
+            $friends3 = $this->getFriends($friend2);
+            echo "Received $counter chunk friends." . PHP_EOL;
+            $friends3 = $this->filteringDeletedUser($friends3);
+
+            echo "Filtered $counter chunk friends." . PHP_EOL;
+
+            $friends3_chunked = array_chunk($friends3, self::MAX_QUERIES_NUMBER);
+
+            foreach ($friends_chunked as $friends1) {
+                foreach ($friends3_chunked as $friends3) {
+                    $vk_script_code = Utils::template($this->mutual_friends_vk_script, array(
+                        'source_friends'    => implode(',', $friends3),
+                        'target_friends'    => implode(',', $friends1)
+                    ));
+                    $linked_data = array(
+                        'friend_id' => $friend2
+                    );
+                    array_push(
+                        $workers,
+                        $this->APIAsync(array('execute', array('code' => $vk_script_code)), $result_stack, $linked_data)
+                    );
+                }
+            }
+            $counter++;
         }
     }
 
@@ -505,9 +556,12 @@ class UsersRelationDetector {
                 $target_property_name => $users_target
             ));
         } else {
-            return $this->APIAsync('friends.getMutual', array(
-                'source_uid' => $user_source,
-                $target_property_name => $users_target
+            return $this->APIAsync(array(
+                'friends.getMutual',
+                array(
+                    'source_uid' => $user_source,
+                    $target_property_name => $users_target
+                )
             ), $result_array);
         }
     }
@@ -596,6 +650,18 @@ class UsersRelationDetector {
                 $this->setChains(array($fourth_order_chain));
             } else {
                 $this->setChains($fourth_order_chain);
+            }
+            return;
+        }
+
+        // Цепочка пятого порядка: проверяем, имеют ли друзья друзей пользователя-источника общих друзей с друзьями целевого пользователя.
+        $fifth_order_chain = $this->buildChainsCommon($this->user_source, $this->user_target, 5);
+        if (count($fifth_order_chain) != 0) {
+            if ($this->mode == 'random_chain') {
+                $fifth_order_chain = $fifth_order_chain[array_rand($fifth_order_chain)];
+                $this->setChains(array($fifth_order_chain));
+            } else {
+                $this->setChains($fifth_order_chain);
             }
             return;
         }

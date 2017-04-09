@@ -21,15 +21,22 @@ class VKAsync extends Thread {
     private $shared_array;
 
     /**
+     * @var Threaded Объект, представляющий из себя разделяемую память, в который будет записан результат выполнения запроса.
+     * Запись происходит аналогично записи в массив (array_push).
+     */
+    private $linked_data;
+
+    /**
      * VKAsync constructor. Во время инициализации также происходит запуск потока (выхов метода start).
      *
      * @param $vk VK Инстанс объекта VK API.
      * @param $api_args array Аргументы для выполнения запроса к VK API: название метода и параметры.
      * @param $shared_array Threaded Объект, представляющий из себя разделяемую память, в который будет записан результат выполнения запроса.
      */
-    public function __construct($vk, $api_args, $shared_array) {
+    public function __construct($vk, $api_args, $shared_array, $linked_data = null) {
         $this->vk = $vk;
         $this->shared_array = $shared_array;
+        $this->linked_data = $linked_data;
         $this->api_args = (array)$api_args;
         $this->start();
     }
@@ -49,7 +56,12 @@ class VKAsync extends Thread {
             throw new Exception("Unknown error.");
         }
 
-        $result = array('data' => $result['response']);
+        $result = array(
+            'data' => $result['response']
+        );
+        if ($this->linked_data !== null) {
+            $result['linked_data'] = (array)$this->linked_data;
+        }
         $this->shared_array[] = (object)$result;
     }
 }

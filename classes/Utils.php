@@ -38,10 +38,10 @@ class Utils {
     static public function swapLastDepthsMultidimensionalArray($array, $swapped_multidimensional_array, $level = 0) {
         foreach ($array as $key => $sub_array) {
             if (self::getArrayDepth($sub_array) > 2) {
-                $swapped_multidimensional_array[$key] = self::swapLastDepthMultidimensionalArray(
+                $swapped_multidimensional_array[$key] = self::swapLastDepthsMultidimensionalArray(
                     $sub_array,
-                    $level + 1,
-                    array()
+                    array(),
+                    $level + 1
                 );
             } else {
                 if (self::isMultidimensionalArray($sub_array)) {
