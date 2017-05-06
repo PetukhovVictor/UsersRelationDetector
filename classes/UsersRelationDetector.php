@@ -1,8 +1,8 @@
 <?
 
-require('./API/VK.php');
-require('./API/VKAsync.php');
-require('./classes/Utils.php');
+require_once __DIR__ . '/../API/VK.php';
+require_once __DIR__ . '/../API/VKAsync.php';
+require_once __DIR__ . '/Utils.php';
 
 class UsersRelationDetector {
     /**
@@ -17,7 +17,7 @@ class UsersRelationDetector {
      *
      * @type int
      */
-    const USERS_CHUNK_SIZE = 100;
+    const USERS_CHUNK_SIZE = 300;
 
     /**
      * Размер 'порции' друзей, которой дозволено оперировать при работе с получением общих друзей через VK API.
@@ -311,7 +311,7 @@ class UsersRelationDetector {
         $this->user_source = $user_source;
         $this->user_target = $user_target;
         $this->mode = $option['mode'] ?? 'random_chain';
-        $this->mutual_friends_vk_script = file_get_contents($option['mutual_friends_script_path'] ?? 'mutualFriends.vks');
+        $this->mutual_friends_vk_script = file_get_contents($option['mutual_friends_script_path'] ?? __DIR__ . '/../mutualFriends.vks');
     }
 
     /**
@@ -364,12 +364,23 @@ class UsersRelationDetector {
     private function filteringDeletedUser($users)
     {
         $users_chunked = array_chunk($users, self::USERS_CHUNK_SIZE);
+
+        $workers = array();
+        $result_stack = new Threaded();
+
         $users_filtered = array();
         foreach($users_chunked as $users_chunk) {
-            $users_info = $this->API('users.get', array(
-                'user_ids' => implode(',', $users_chunk)
-            ));
-            $users_filtered_full = array_filter($users_info, function($user) {
+            $worker = $this->APIAsync(
+                array('users.get', array('user_ids' => implode(',', $users_chunk))),
+                $result_stack
+            );
+            array_push($workers, $worker);
+        }
+
+        Utils::workersSync($workers);
+
+        foreach ($result_stack as $result_chunk) {
+            $users_filtered_full = array_filter($result_chunk->data, function($user) {
                 return empty($user['deactivated']);
             });
             foreach ($users_filtered_full as &$user) {
@@ -377,26 +388,39 @@ class UsersRelationDetector {
             }
             $users_filtered = array_merge($users_filtered, $users_filtered_full);
         }
+
         return $users_filtered;
     }
 
-    private function buildChainsCommon($user_source, $users_target, $order) {
-        $friends = $this->getFriends($user_source);
-        $friends = $this->filteringDeletedUser($friends);
-        $friends_chunked = array_chunk($friends, self::FRIENDS_CHUNK_SIZE);
+    private function buildChainsCommon($user_source, $user_target, $order) {
+        $user_source_friends = $this->getFriends($user_source);
+        $user_source_friends = $this->filteringDeletedUser($user_source_friends);
+        $user_source_friends = array_chunk($user_source_friends, self::FRIENDS_CHUNK_SIZE);
 
         $workers = array();
         $result_stack = new Threaded();
 
         switch ($order) {
             case 3:
-                $this->buildThirdOrderChains($friends_chunked, $workers, $result_stack, $users_target);
+                $this->buildThirdOrderChains(
+                    $user_source_friends,
+                    $user_target,
+                    array('workers' => $workers, 'result_stack' => $result_stack)
+                );
                 break;
             case 4:
-                $this->buildFourthOrderChains($friends_chunked, $workers, $result_stack, $users_target);
+                $this->buildFourthOrderChains(
+                    $user_source_friends,
+                    $user_target,
+                    array('workers' => $workers, 'result_stack' => $result_stack)
+                );
                 break;
             case 5:
-                $this->buildFifthOrderChains($friends_chunked, $workers, $result_stack, $users_target);
+                $this->buildFifthOrderChains(
+                    $user_source_friends,
+                    $user_target,
+                    array('workers' => $workers, 'result_stack' => $result_stack)
+                );
                 break;
         }
 
@@ -424,19 +448,19 @@ class UsersRelationDetector {
         $chains_info = self::getChainsByMultidimensionalFriendsMap($multidimensional_mutual_friends);
         $chains = $chains_info['chains'];
         // Добавляем в каждую цепочку пользователя-источника и целевого пользователя.
-        $chains = self::addEndpointUsers($chains, array($user_source), array($users_target));
+        $chains = self::addEndpointUsers($chains, array($user_source), array($user_target));
         return $chains;
     }
 
     /**
      * Построение цепочки третьего порядка.
      */
-    private function buildThirdOrderChains($friends_chunked, &$workers, $result_stack, $users_target)
+    private function buildThirdOrderChains($user_source_friends, $user_target, $params)
     {
-        foreach ($friends_chunked as $friends_chunk) {
+        foreach ($user_source_friends as $user_source_friends_chunk) {
             array_push(
-                $workers,
-                $this->getCommonFriends($users_target, $friends_chunk, $result_stack)
+                $params['workers'],
+                $this->getCommonFriends($user_target, $user_source_friends_chunk, $params['result_stack'])
             );
         }
     }
@@ -444,21 +468,26 @@ class UsersRelationDetector {
     /**
      * Построение цепочки четвертого порядка.
      */
-    private function buildFourthOrderChains($friends_chunked, &$workers, $result_stack, $users_target) {
-        $friends2 = $this->getFriends($users_target);
-        $friends2 = $this->filteringDeletedUser($friends2);
-        $friends2_chunked = array_chunk($friends2, self::MAX_QUERIES_NUMBER);
+    private function buildFourthOrderChains($user_source_friends, $user_target, $params) {
+        $user_target_friends = $this->getFriends($user_target);
+        $user_target_friends = $this->filteringDeletedUser($user_target_friends);
+        $user_target_friends = array_chunk($user_target_friends, self::MAX_QUERIES_NUMBER);
 
-        foreach ($friends_chunked as $friends1) {
-            foreach ($friends2_chunked as $friends2) {
+        $params['need_set_linked_data'] = $params['need_set_linked_data'] ?? false;
+
+        foreach ($user_source_friends as $source_friend) {
+            foreach ($user_target_friends as $target_friend) {
                 $vk_script_code = Utils::template($this->mutual_friends_vk_script, array(
-                    'source_friends'    => implode(',', $friends2),
-                    'target_friends'    => implode(',', $friends1)
+                    'source_friends' => implode(',', $target_friend),
+                    'target_friends' => implode(',', $source_friend)
                 ));
-                array_push(
-                    $workers,
-                    $this->APIAsync(array('execute', array('code' => $vk_script_code)), $result_stack)
+                $linked_data = $params['need_set_linked_data'] ? array('friend_id' => $user_target) : null;
+                $worker = $this->APIAsync(
+                    array('execute', array('code' => $vk_script_code)),
+                    $params['result_stack'],
+                    $linked_data
                 );
+                array_push($params['workers'], $worker);
             }
         }
     }
@@ -466,37 +495,14 @@ class UsersRelationDetector {
     /**
      * Построение цепочки пятого порядка.
      */
-    private function buildFifthOrderChains($friends_chunked, &$workers, $result_stack, $users_target) {
-        $friends2 = $this->getFriends($users_target);
-        $friends2 = $this->filteringDeletedUser($friends2);
+    private function buildFifthOrderChains($user_source_friends, $user_target, $params) {
+        $user_target_friends = $this->getFriends($user_target);
+        $user_target_friends = $this->filteringDeletedUser($user_target_friends);
 
-        $counter = 1;
-        foreach ($friends2 as $friend2) {
-            echo "Try chunk friends." . PHP_EOL;
-            $friends3 = $this->getFriends($friend2);
-            echo "Received $counter chunk friends." . PHP_EOL;
-            $friends3 = $this->filteringDeletedUser($friends3);
+        $params['need_set_linked_data'] = true;
 
-            echo "Filtered $counter chunk friends." . PHP_EOL;
-
-            $friends3_chunked = array_chunk($friends3, self::MAX_QUERIES_NUMBER);
-
-            foreach ($friends_chunked as $friends1) {
-                foreach ($friends3_chunked as $friends3) {
-                    $vk_script_code = Utils::template($this->mutual_friends_vk_script, array(
-                        'source_friends'    => implode(',', $friends3),
-                        'target_friends'    => implode(',', $friends1)
-                    ));
-                    $linked_data = array(
-                        'friend_id' => $friend2
-                    );
-                    array_push(
-                        $workers,
-                        $this->APIAsync(array('execute', array('code' => $vk_script_code)), $result_stack, $linked_data)
-                    );
-                }
-            }
-            $counter++;
+        foreach ($user_target_friends as $target_friend) {
+            $this->buildFourthOrderChains($user_source_friends, $target_friend, $params);
         }
     }
 
