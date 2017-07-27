@@ -1,10 +1,13 @@
-<?
+<? namespace URD;
 
 require_once __DIR__ . '/../API/VK.php';
 require_once __DIR__ . '/../API/VKAsync.php';
-require_once __DIR__ . '/Utils.php';
 
-class UsersRelationDetector {
+require_once __DIR__ . '/../Utils.php';
+
+require_once __DIR__ . '/Helpers.php';
+
+class Program {
     /**
      * Минимальный интервал между вызовами методов VK API (поставлено исходя из ограничения: макс. 3 в секунду).
      *
@@ -34,9 +37,16 @@ class UsersRelationDetector {
     const MAX_QUERIES_NUMBER = 25;
 
     /**
+     * Пусть к скрипту (VKScript), получающему списки общих друзей для заданого набора пользователей.
+     *
+     * @type string
+     */
+    const COMMON_FRIENDS_CHUNK_SCRIPT_PATH = __DIR__ . '/../../scripts/commonFriends.vks';
+
+    /**
      * Ссылка на объект, предоставляющий функционал для работы с VK API.
      *
-     * @type VK
+     * @type \VK
      */
     private $vk;
 
@@ -76,228 +86,6 @@ class UsersRelationDetector {
     private $chain_length;
 
     /**
-     * Метод-хелпер для форматирования списка общих друзей в удобный для дальнейшей работы формат.
-     *
-     * Пример входного массива:
-     *
-     *  Array(
-     *      [0] => Array(
-     *          [id] => 110001
-     *          [common_friends] => Array(
-     *              [0] => Array(
-     *                  [id] => 110002
-     *                  [common_friends] => Array(
-     *                      [0] => 110003
-     *                      [1] => 110004
-     *                      [2] => 110005
-     *                      [3] => 110006
-     *                  )
-     *                  [common_count] => 4
-     *              )
-     *          )
-     *      )
-     *      [1] => Array(
-     *          [id] => 110007
-     *          [common_friends] => Array(
-     *              [0] => Array(
-     *                  [id] => 110008
-     *                  [common_friends] => Array(
-     *                      [0] => 110009
-     *                      [1] => 1100010
-     *                  )
-     *                  [common_count] => 2
-     *              )
-     *              [1] => Array(
-     *                  [id] => 1100011
-     *                  [common_friends] => Array(
-     *                      [0] => 1100012
-     *                  )
-     *                  [common_count] => 1
-     *              )
-     *          )
-     *      )
-     *  )
-     *
-     * Пример выходного массива:
-     *
-     *  Array(
-     *      [110001] => Array(
-     *          [110002] => Array(
-     *              [0] => 110003
-     *              [1] => 110004
-     *              [2] => 110005
-     *              [3] => 110006
-     *          )
-     *      )
-     *      [110007] => Array(
-     *          [110008] => Array(
-     *              [0] => 110009
-     *              [1] => 1100010
-     *          )
-     *          [1100011] => Array(
-     *              [0] => 1100012
-     *          )
-     *      )
-     *  )
-     *
-     * @param   array $common_friends Многоуровневый массив со списком общих друзей, возвращенный VK API.
-     * @param   array $mutual_friends_formatted Форматируемый многуровневый массив со списком общих друзей, прокидываемый по рекурсии.
-     *
-     * @return  array Отформатированный на данной глубине рекурсии многуровневый массив со списком общих друзей.
-     */
-    static private function buildMultidimensionalFriendsMap($common_friends, $mutual_friends_formatted)
-    {
-        foreach ($common_friends as $common_friend) {
-            if (is_array($common_friend)) {
-                $mutual_friends_formatted['id' . $common_friend['id']] = self::buildMultidimensionalFriendsMap($common_friend['common_friends'], array());
-            } else {
-                array_push($mutual_friends_formatted, 'id' . $common_friend);
-            }
-        }
-        return $mutual_friends_formatted;
-    }
-
-    /**
-     * Метод-хелпер для преобразования многомерного ассоциативного массива цепочек друзей в одномерный массив цепочек.
-     *
-     * Пример входного массива:
-     *
-     *  array(
-     *      '1277081' => array(
-     *          '183800139' => array(
-     *              '64439049',
-     *              '173811066',
-     *              '138183334'
-     *          ),
-     *          '12352135' => array(
-     *              '5234334',
-     *              '12355111'
-     *          )
-     *      ),
-     *      '1277081' => array(
-     *          '6543213' => array(
-     *              '7812345'
-     *          )
-     *      )
-     *  )
-     *
-     * Пример выходного массива:
-     *
-     *  array(
-     *      array(64439049,183800139,1277081),
-     *      array(173811066,183800139,1277081),
-     *      array(138183334,183800139,1277081),
-     *      array(5234334,12352135,1277081),
-     *      array(12355111,12352135,1277081),
-     *      array(7812345,6543213,1277081)
-     *  )
-     *
-     * @param array $array Исходный многомерный ассоциативный массив цепочек друзей.
-     * @param array $chains Транслируемый по рекурсии массив цепочек друзей (в конечном счете - итоговый целевой массив).
-     *
-     * @return array(
-     *      'chains' => array,
-     *      'chains_offset' => int
-     *  ) Массив цепочек друзей на определенной стадии готовности
-     *  и смещение (для отсеивания уже полностью готовых (составленных) цепочек).
-     */
-    static private function getChainsByMultidimensionalFriendsMap($array, $chains = array()) {
-        // Запоминаем кол-во уже готовых цепочек - они и будут являться смещением для 'вышестоящей рекурсии'.
-        $chains_offset = count($chains);
-        foreach ($array as $array_key => $child_element) {
-            // Если элемент - массив, продолжаем идти вглубь по рекурсии.
-            if (is_array($child_element)) {
-                $chains_info = self::getChainsByMultidimensionalFriendsMap($child_element, $chains);
-                $chains = $chains_info['chains'];
-                $friend_id = $array_key;
-                // После выхода из рекурсии дописываем 'промежуточного друга' к каждой цепочке согласно переданному смещению.
-                for ($i = $chains_info['chains_offset']; $i < count($chains); $i++) {
-                    array_push($chains[$i], $friend_id);
-                }
-                // Если элемент - не массив, создаём для каждого такого элемента новую цепочку
-                // (это самый глубокий уровень рекурсии - здесь находятся 'endpoint-друзья').
-            } else {
-                $friend_id = $child_element;
-                $chain = array($friend_id);
-                array_push($chains, $chain);
-            }
-        }
-        return array(
-            'chains' => $chains,
-            'chains_offset' => $chains_offset
-        );
-    }
-
-    /**
-     * Метод-хелпер для получения количества 'endpoint-друзей' в переданном многомерном ассоциативном массиве цепочек друзей.
-     * Метод используется для подсчета суммарного числа найденных общих друзей.
-     *
-     * Пример входного массива:
-     *
-     *  array(
-     *      '1277081' => array(
-     *          '183800139' => array(
-     *              '64439049',
-     *              '173811066',
-     *              '138183334'
-     *          ),
-     *          '12352135' => array(
-     *              '5234334',
-     *              '12355111'
-     *          )
-     *      ),
-     *      '1277081' => array(
-     *          '6543213' => array(
-     *              '7812345'
-     *          )
-     *      )
-     *  )
-     *
-     * Пример выходного значения:
-     *
-     *  6
-     *
-     * @param array $friends Исходный многомерный ассоциативный массив цепочек друзей.
-     * @param int $number Транслируемое по рекурсии промежуточное число 'endpoint-друзей' и равное в конечном счете искомому числу.
-     *
-     * @return int Число 'endpoint-друзей'.
-     */
-    static private function getNumberEndpointFriends($friends, $number = 0) {
-        if (!is_array($friends[0])) {
-            return count($friends);
-        }
-        foreach ($friends as $array_key => $child_element) {
-            if (is_array($child_element[0])) {
-                $number += self::getNumberEndpointFriends($child_element);
-            } else {
-                $number += count($child_element);
-            }
-        }
-        return $number;
-    }
-
-    /**
-     * Дописывание исходного и целевого пользователей к найденным цепочкам (для дальнейшего вывода).
-     *
-     * @param array $chains Массив цепочек друзей.
-     * @param int $user_source Исходный пользователь.
-     * @param int $user_target Целевой пользователь.
-     *
-     * @return array Массив цепочек друзей с дописанными исходным и целевым пользователем.
-     */
-    static private function addEndpointUsers($chains, $users_left_side, $users_right_side) {
-        foreach ($chains as &$chain) {
-            foreach ($users_left_side as $user) {
-                array_unshift($chain, 'id' . $user);
-            }
-            foreach ($users_right_side as $user) {
-                array_push($chain, 'id' . $user);
-            }
-        }
-        return $chains;
-    }
-
-    /**
      * Конструктор.
      *
      * @param   array $app          Данные VK-приложения, которое будет использоваться для запросов к API.
@@ -307,11 +95,11 @@ class UsersRelationDetector {
      */
     public function __construct($user_source, $user_target, $app, $option = null)
     {
-        $this->vk = new VK($app['id'], $app['secret'], $app['access_token']);
+        $this->vk = new \VK($app['id'], $app['secret'], $app['access_token']);
         $this->user_source = $user_source;
         $this->user_target = $user_target;
         $this->mode = $option['mode'] ?? 'random_chain';
-        $this->mutual_friends_vk_script = file_get_contents($option['mutual_friends_script_path'] ?? __DIR__ . '/../mutualFriends.vks');
+        $this->mutual_friends_vk_script = file_get_contents(self::COMMON_FRIENDS_CHUNK_SCRIPT_PATH);
     }
 
     /**
@@ -319,7 +107,7 @@ class UsersRelationDetector {
      *
      * Число аргументов - произвольное, в соответствии с заданным методом VK API (аргументы транслируются в него).
      *
-     * @throws Exception
+     * @throws \Exception
      *
      * @return  mixed Результат выполнения заданного запроса к VK API.
      */
@@ -330,10 +118,10 @@ class UsersRelationDetector {
         $result = call_user_func_array(array($vk, 'api'), func_get_args());
 
         if (!isset($result['response']) && isset($result['error'])) {
-            throw new Exception("Error code {$result['error']['error_code']}: {$result['error']['error_msg']}");
+            throw new \Exception("Error code {$result['error']['error_code']}: {$result['error']['error_msg']}");
         } elseif (!isset($result['response'])) {
             print_r(func_get_args());
-            throw new Exception("Unknown error.");
+            throw new \Exception("Unknown error.");
         }
 
         return $result['response'];
@@ -346,12 +134,12 @@ class UsersRelationDetector {
      * за исключением последнего аргумента - он должен являться объектов Threaded, представляющий из себя разделяемую память,
      * в него будет записываться результат выполнения запроса.
      *
-     * @return VKAsync Worker, представляющий из себя отдельный поток выполнения.
+     * @return \VKAsync Worker, представляющий из себя отдельный поток выполнения.
      */
     private function APIAsync($api_args, $result_array, $linked_data = null)
     {
         usleep(self::API_CALL_INTERVAL);
-        return new VKAsync($this->vk, $api_args, $result_array, $linked_data);
+        return new \VKAsync($this->vk, $api_args, $result_array, $linked_data);
     }
 
     /**
@@ -366,7 +154,7 @@ class UsersRelationDetector {
         $users_chunked = array_chunk($users, self::USERS_CHUNK_SIZE);
 
         $workers = array();
-        $result_stack = new Threaded();
+        $result_stack = new \Threaded();
 
         $users_filtered = array();
         foreach($users_chunked as $users_chunk) {
@@ -377,7 +165,7 @@ class UsersRelationDetector {
             array_push($workers, $worker);
         }
 
-        Utils::workersSync($workers);
+        \Utils::workersSync($workers);
 
         foreach ($result_stack as $result_chunk) {
             $users_filtered_full = array_filter($result_chunk->data, function($user) {
@@ -398,7 +186,7 @@ class UsersRelationDetector {
         $user_source_friends = array_chunk($user_source_friends, self::FRIENDS_CHUNK_SIZE);
 
         $workers = array();
-        $result_stack = new Threaded();
+        $result_stack = new \Threaded();
 
         switch ($order) {
             case 3:
@@ -424,7 +212,7 @@ class UsersRelationDetector {
                 break;
         }
 
-        Utils::workersSync($workers);
+        \Utils::workersSync($workers);
 
         $multidimensional_mutual_friends = array();
         foreach ($result_stack as $result_chunk) {
@@ -437,18 +225,18 @@ class UsersRelationDetector {
                 )
             );
             // Нормализуем многомерный ассоциативный массив, полученный от VK API (преобразуем в удобный вид).
-            $result = self::buildMultidimensionalFriendsMap($result_chunk, array());
+            $result = Helpers::buildMultidimensionalFriendsMap($result_chunk, array());
             // Меняем местами последний уровень массива и препоследний
             // (в виду специфики структуры объекта, отадаваемого VK API).
-            $result = Utils::swapLastDepthsMultidimensionalArray($result, array());
+            $result = \Utils::swapLastDepthsMultidimensionalArray($result, array());
             $multidimensional_mutual_friends = array_merge_recursive($multidimensional_mutual_friends, $result);
         }
 
         // Преобразуем многомерный ассоциативный массив цепочек друзей в массив цепочек (линеаризуем).
-        $chains_info = self::getChainsByMultidimensionalFriendsMap($multidimensional_mutual_friends);
+        $chains_info = Helpers::getChainsByMultidimensionalFriendsMap($multidimensional_mutual_friends);
         $chains = $chains_info['chains'];
         // Добавляем в каждую цепочку пользователя-источника и целевого пользователя.
-        $chains = self::addEndpointUsers($chains, array($user_source), array($user_target));
+        $chains = Helpers::addEndpointUsers($chains, array($user_source), array($user_target));
         return $chains;
     }
 
@@ -477,7 +265,7 @@ class UsersRelationDetector {
 
         foreach ($user_source_friends as $source_friend) {
             foreach ($user_target_friends as $target_friend) {
-                $vk_script_code = Utils::template($this->mutual_friends_vk_script, array(
+                $vk_script_code = \Utils::template($this->mutual_friends_vk_script, array(
                     'source_friends' => implode(',', $target_friend),
                     'target_friends' => implode(',', $source_friend)
                 ));
@@ -511,8 +299,6 @@ class UsersRelationDetector {
      *
      * @param   int $user_id   ID пользователя, друзей которого необходимо получить.
      *
-     * @throws Exception
-     *
      * @return  array[int] Список ID пользователей-друзей указанного пользователя.
      */
     private function getFriends($user_id)
@@ -542,10 +328,10 @@ class UsersRelationDetector {
      * @param   int $user_source                ID пользователя-объекта для получения списка общих друзей.
      * @param   int | array[int] $users_target  ID пользователя или массив ID пользователей,
      *                                          общих друзей заданного пользователя с которым(и) нужно получить.
-     * @param   Threaded $result_array          Объект разделяемой памяти для записи в него списка общих друзей.
+     * @param   \Threaded $result_array         Объект разделяемой памяти для записи в него списка общих друзей.
      *                                          В случае, если $result_array не задан, запрос выполняется синхронно.
      *
-     * @return VKAsync|mixed Worker, представляющий из себя отдельный поток выполнения, либо результат выполнения запроса
+     * @return \VKAsync|mixed Worker, представляющий из себя отдельный поток выполнения, либо результат выполнения запроса
      *  (если запрос выполнялся синхронно).
      */
     private function getCommonFriends($user_source, $users_target, $result_array = null)

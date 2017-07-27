@@ -1,6 +1,6 @@
 <?
 
-class Utils {
+abstract class Utils {
     static public function arrayFlatten($array) {
         if (!is_array($array)) {
             return false;
