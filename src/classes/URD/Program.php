@@ -65,21 +65,21 @@ class Program {
     private $user_target;
 
     /**
-     * Проложенные от одного пользователя к другому цепочки из друзей (массив массивов id пользователей).
+     * Проложенные от одного пользователя к другому цепочки из друзей (массив массивов ID пользователей).
      *
      * @type int[][]
      */
     private $chains;
 
     /**
-     * Режим вывода цепочки (random_chain - вывести одну случайную цепочку, full_chain - вывести всевозможные цепочки).
+     * Режим вывода цепочки (random_chain - вывести одну случайную цепочку, all_chains - вывести всевозможные цепочки).
      *
      * @type string
      */
     private $mode;
 
     /**
-     * Длина проложенной от одного пользователя к другому цепочки из друзей (количество рукопожатий).
+     * Длина цепочки из друзей, проложенной от одного пользователя к другому (количество рукопожатий).
      *
      * @type int
      */
@@ -109,7 +109,7 @@ class Program {
      *
      * @throws \Exception
      *
-     * @return  mixed Результат выполнения заданного запроса к VK API.
+     * @return mixed Результат выполнения заданного запроса к VK API.
      */
     private function API()
     {
@@ -147,7 +147,7 @@ class Program {
      *
      * @param   array[int] $users   Массив с ID пользователей, который требуется отфильтровать.
      *
-     * @return  array[int] Отфильтрованный массив пользователей.
+     * @return  array[int]          Отфильтрованный массив пользователей.
      */
     private function filteringDeletedUser($users)
     {
@@ -180,6 +180,15 @@ class Program {
         return $users_filtered;
     }
 
+    /**
+     * Построение цепочек пользователей заданного порядка.
+     *
+     * @param int $user_source  ID пользователя-источника (от которого нужно строить цепочку рукопожатий).
+     * @param int $user_target  ID целевого пользователя (к которому нужно строить цепочку рукопожатий).
+     * @param int $order        Порядок (длина) цепочки.
+     *
+     * @return array            Массив построенных цепочек.
+     */
     private function buildChainsCommon($user_source, $user_target, $order) {
         $user_source_friends = $this->getFriends($user_source);
         $user_source_friends = $this->filteringDeletedUser($user_source_friends);
@@ -216,24 +225,28 @@ class Program {
 
         $multidimensional_mutual_friends = array();
         foreach ($result_stack as $result_chunk) {
-            // Если результат (список друзей) должен был быть связан с другим другом,
-            // дописываем его ID, создая ещё один уровень вложенности.
+            /*
+             * Если результат (список друзей) должен был быть связан с другим другом,
+             * дописываем его ID, создая ещё один уровень вложенности.
+             */
             $result_chunk = !isset($result_chunk->linked_data) ? $result_chunk->data : array(
                 array(
                     'id' => $result_chunk->linked_data['friend_id'],
                     'common_friends' => $result_chunk->data
                 )
             );
-            // Нормализуем многомерный ассоциативный массив, полученный от VK API (преобразуем в удобный вид).
-            $result = Helpers::buildMultidimensionalFriendsMap($result_chunk, array());
-            // Меняем местами последний уровень массива и препоследний
-            // (в виду специфики структуры объекта, отадаваемого VK API).
+            // Индексируем структуру со списком общих друзей, полученной от VK API.
+            $result = Helpers::indexingCommonFriends($result_chunk, array());
+            /*
+             * Меняем местами последний уровень массива и препоследний
+             * (в виду специфики структуры объекта, отадаваемого VK API).
+             */
             $result = \Utils::swapLastDepthsMultidimensionalArray($result, array());
             $multidimensional_mutual_friends = array_merge_recursive($multidimensional_mutual_friends, $result);
         }
 
-        // Преобразуем многомерный ассоциативный массив цепочек друзей в массив цепочек (линеаризуем).
-        $chains_info = Helpers::getChainsByMultidimensionalFriendsMap($multidimensional_mutual_friends);
+        // Линеаризуем мапу цепочек друзей (в массив цепочек).
+        $chains_info = Helpers::linearizeCommonFriendsMap($multidimensional_mutual_friends);
         $chains = $chains_info['chains'];
         // Добавляем в каждую цепочку пользователя-источника и целевого пользователя.
         $chains = Helpers::addEndpointUsers($chains, array($user_source), array($user_target));
@@ -242,6 +255,12 @@ class Program {
 
     /**
      * Построение цепочки третьего порядка.
+     *
+     * @param array[int]    $user_source_friends    ID пользователей-источников (от которых нужно строить цепочки рукопожатий).
+     * @param int           $user_target            ID целевого пользователя (к которому нужно строить цепочку рукопожатий).
+     * @param array         $params                 Дополнительные параметры:
+     *                                                  - array[Worker] workers         список воркеров,
+     *                                                  - array         result_stack    shared stack.
      */
     private function buildThirdOrderChains($user_source_friends, $user_target, $params)
     {
@@ -255,6 +274,13 @@ class Program {
 
     /**
      * Построение цепочки четвертого порядка.
+     *
+     * @param array[int]    $user_source_friends    ID пользователей-источников (от которых нужно строить цепочки рукопожатий).
+     * @param int           $user_target            ID целевого пользователя (к которому нужно строить цепочку рукопожатий).
+     * @param array         $params                 Дополнительные параметры:
+     *                                                  - array[Worker] workers                 список воркеров,
+     *                                                  - array         result_stack            shared stack,
+     *                                                  - boolean       need_set_linked_data    Необходимость линковки результатов запросов с ID пользователя.
      */
     private function buildFourthOrderChains($user_source_friends, $user_target, $params) {
         $user_target_friends = $this->getFriends($user_target);
@@ -282,6 +308,12 @@ class Program {
 
     /**
      * Построение цепочки пятого порядка.
+     *
+     * @param array[int]    $user_source_friends    ID пользователей-источников (от которых нужно строить цепочки рукопожатий).
+     * @param int           $user_target            ID целевого пользователя (к которому нужно строить цепочку рукопожатий).
+     * @param array         $params                 Дополнительные параметры:
+     *                                                  - array[Worker] workers         список воркеров,
+     *                                                  - array         result_stack    shared stack.
      */
     private function buildFifthOrderChains($user_source_friends, $user_target, $params) {
         $user_target_friends = $this->getFriends($user_target);
@@ -297,9 +329,9 @@ class Program {
     /**
      * Получение друзей заданного пользователя.
      *
-     * @param   int $user_id   ID пользователя, друзей которого необходимо получить.
+     * @param   int $user_id    ID пользователя, друзей которого необходимо получить.
      *
-     * @return  array[int] Список ID пользователей-друзей указанного пользователя.
+     * @return  array[int]      Список ID пользователей-друзей указанного пользователя.
      */
     private function getFriends($user_id)
     {
@@ -309,12 +341,12 @@ class Program {
     }
 
     /**
-     * Проверка на то, являются ли два заданных пользователя друзьями.
+     * Проверка наличия дружбы между двумя пользователями.
      *
      * @param   int $user_id1   ID 1-го пользователя.
      * @param   int $user_id2   ID 2-го пользователя.
      *
-     * @return  boolean Флаг, показывающий, являются ли пользователи друзьями.
+     * @return  boolean         Флаг, показывающий, являются ли пользователи друзьями.
      */
     private function isFriends($user_id1, $user_id2)
     {
@@ -325,14 +357,14 @@ class Program {
     /**
      * Получение списка общих друзей между пользователем и списком других заданных пользователей.
      *
-     * @param   int $user_source                ID пользователя-объекта для получения списка общих друзей.
-     * @param   int | array[int] $users_target  ID пользователя или массив ID пользователей,
-     *                                          общих друзей заданного пользователя с которым(и) нужно получить.
-     * @param   \Threaded $result_array         Объект разделяемой памяти для записи в него списка общих друзей.
-     *                                          В случае, если $result_array не задан, запрос выполняется синхронно.
+     * @param   int                 $user_source    ID пользователя-источника для получения списка общих друзей.
+     * @param   int | array[int]    $users_target   ID пользователя или массив ID пользователей,
+     *                                              общих друзей заданного пользователя с которым(и) нужно получить.
+     * @param   \Threaded           $result_array   Объект разделяемой памяти для записи в него списка общих друзей.
+     *                                              В случае, если $result_array не задан, запрос выполняется синхронно.
      *
-     * @return \VKAsync|mixed Worker, представляющий из себя отдельный поток выполнения, либо результат выполнения запроса
-     *  (если запрос выполнялся синхронно).
+     * @return  \VKAsync | mixed                    Worker, представляющий из себя отдельный поток выполнения,
+     *                                              либо результат выполнения запроса (если запрос выполнялся синхронно).
      */
     private function getCommonFriends($user_source, $users_target, $result_array = null)
     {
@@ -390,7 +422,8 @@ class Program {
     }
 
     /**
-     * Построение цепочек друзей (по нарастающей: построение цепочки более высокого порядка при ненахождении цепочек более низкого порядка).
+     * Построение цепочек друзей
+     * (по нарастающей: построение цепочки более высокого порядка при ненахождении цепочек более низкого порядка).
      */
     public function buildChains()
     {
