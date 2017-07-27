@@ -120,7 +120,6 @@ class Program {
         if (!isset($result['response']) && isset($result['error'])) {
             throw new \Exception("Error code {$result['error']['error_code']}: {$result['error']['error_msg']}");
         } elseif (!isset($result['response'])) {
-            print_r(func_get_args());
             throw new \Exception("Unknown error.");
         }
 
@@ -130,11 +129,11 @@ class Program {
     /**
      * Метод-обертка для асинхронного выполнения запросов к VK API.
      *
-     * Число аргументов - произвольное, в соответствии с заданным методом VK API (аргументы транслируются в него),
-     * за исключением последнего аргумента - он должен являться объектов Threaded, представляющий из себя разделяемую память,
-     * в него будет записываться результат выполнения запроса.
+     * @param   array       $api_args     Транслируемые в метод VK API аргументы.
+     * @param   \Threaded   $result_array Объект разделяемой памяти, в который будет производиться запись результата запроса.
+     * @param   array       $linked_data  Привязанные к запросу дополнительные данные.
      *
-     * @return \VKAsync Worker, представляющий из себя отдельный поток выполнения.
+     * @return \VKAsync     Worker, представляющий из себя отдельный поток выполнения.
      */
     private function APIAsync($api_args, $result_array, $linked_data = null)
     {
@@ -189,67 +188,76 @@ class Program {
      *
      * @return array            Массив построенных цепочек.
      */
-    private function buildChainsCommon($user_source, $user_target, $order) {
+    private function buildChainsCommon($user_source, $user_target, $order)
+    {
         $user_source_friends = $this->getFriends($user_source);
         $user_source_friends = $this->filteringDeletedUser($user_source_friends);
         $user_source_friends = array_chunk($user_source_friends, self::FRIENDS_CHUNK_SIZE);
 
         $workers = array();
-        $result_stack = new \Threaded();
+        $friends_shared_object = new \Threaded();
 
         switch ($order) {
             case 3:
                 $this->buildThirdOrderChains(
                     $user_source_friends,
                     $user_target,
-                    array('workers' => $workers, 'result_stack' => $result_stack)
+                    array('workers' => $workers, 'result_stack' => $friends_shared_object)
                 );
                 break;
             case 4:
                 $this->buildFourthOrderChains(
                     $user_source_friends,
                     $user_target,
-                    array('workers' => $workers, 'result_stack' => $result_stack)
+                    array('workers' => $workers, 'result_stack' => $friends_shared_object)
                 );
                 break;
             case 5:
                 $this->buildFifthOrderChains(
                     $user_source_friends,
                     $user_target,
-                    array('workers' => $workers, 'result_stack' => $result_stack)
+                    array('workers' => $workers, 'result_stack' => $friends_shared_object)
+                );
+                break;
+            case 6:
+                $this->buildSixthOrderChains(
+                    $user_source_friends,
+                    $user_target,
+                    array('workers' => $workers, 'result_stack' => $friends_shared_object)
                 );
                 break;
         }
 
         \Utils::workersSync($workers);
 
-        $multidimensional_mutual_friends = array();
-        foreach ($result_stack as $result_chunk) {
+        $friends_map = array();
+        foreach ($friends_shared_object as $friends) {
             /*
-             * Если результат (список друзей) должен был быть связан с другим другом,
-             * дописываем его ID, создая ещё один уровень вложенности.
+             * Если результат (список друзей) должен был быть связан с другими пользователями
+             * (то есть результат является только частью иерархии общих друзей - его необходимо соеденить с другой частью),
+             * дописываем их в иерархию общих друзей.
              */
-            $result_chunk = !isset($result_chunk->linked_data) ? $result_chunk->data : array(
-                array(
-                    'id' => $result_chunk->linked_data['friend_id'],
-                    'common_friends' => $result_chunk->data
-                )
-            );
+            $friends_hierarchy_chunk = !isset($friends->linked_data) ?
+                $friends->data :
+                Helpers::appendToCommonFriendsHierarchy($friends->data, $friends->linked_data);
+
             // Индексируем структуру со списком общих друзей, полученной от VK API.
-            $result = Helpers::indexingCommonFriends($result_chunk, array());
+            $friends_map_chunk = Helpers::indexingCommonFriends($friends_hierarchy_chunk, array());
+
             /*
              * Меняем местами последний уровень массива и препоследний
              * (в виду специфики структуры объекта, отадаваемого VK API).
              */
-            $result = \Utils::swapLastDepthsMultidimensionalArray($result, array());
-            $multidimensional_mutual_friends = array_merge_recursive($multidimensional_mutual_friends, $result);
+            $friends_map_chunk = \Utils::swapLastDepthsMultidimensionalArray($friends_map_chunk, array());
+            $friends_map = array_merge_recursive($friends_map, $friends_map_chunk);
         }
 
-        // Линеаризуем мапу цепочек друзей (в массив цепочек).
-        $chains_info = Helpers::linearizeCommonFriendsMap($multidimensional_mutual_friends);
-        $chains = $chains_info['chains'];
+        // Линеаризуем мапу цепочек друзей (преобразуем в массив цепочек).
+        $chains = Helpers::linearizeCommonFriendsMap($friends_map)['chains'];
+
         // Добавляем в каждую цепочку пользователя-источника и целевого пользователя.
         $chains = Helpers::addEndpointUsers($chains, array($user_source), array($user_target));
+
         return $chains;
     }
 
@@ -259,8 +267,8 @@ class Program {
      * @param array[int]    $user_source_friends    ID пользователей-источников (от которых нужно строить цепочки рукопожатий).
      * @param int           $user_target            ID целевого пользователя (к которому нужно строить цепочку рукопожатий).
      * @param array         $params                 Дополнительные параметры:
-     *                                                  - array[Worker] workers         список воркеров,
-     *                                                  - array         result_stack    shared stack.
+     *                                                  - array[Worker] workers         Список воркеров,
+     *                                                  - array         result_stack    Shared stack.
      */
     private function buildThirdOrderChains($user_source_friends, $user_target, $params)
     {
@@ -278,16 +286,15 @@ class Program {
      * @param array[int]    $user_source_friends    ID пользователей-источников (от которых нужно строить цепочки рукопожатий).
      * @param int           $user_target            ID целевого пользователя (к которому нужно строить цепочку рукопожатий).
      * @param array         $params                 Дополнительные параметры:
-     *                                                  - array[Worker] workers                 список воркеров,
-     *                                                  - array         result_stack            shared stack,
-     *                                                  - boolean       need_set_linked_data    Необходимость линковки результатов запросов с ID пользователя.
+     *                                                  - array[Worker] workers         Список воркеров,
+     *                                                  - array         result_stack    Shared stack,
+     *                                                  - array         linked_data     Привязанные к запросу дополнительные данные.
      */
-    private function buildFourthOrderChains($user_source_friends, $user_target, $params) {
+    private function buildFourthOrderChains($user_source_friends, $user_target, $params)
+    {
         $user_target_friends = $this->getFriends($user_target);
         $user_target_friends = $this->filteringDeletedUser($user_target_friends);
         $user_target_friends = array_chunk($user_target_friends, self::MAX_QUERIES_NUMBER);
-
-        $params['need_set_linked_data'] = $params['need_set_linked_data'] ?? false;
 
         foreach ($user_source_friends as $source_friend) {
             foreach ($user_target_friends as $target_friend) {
@@ -295,7 +302,7 @@ class Program {
                     'source_friends' => implode(',', $target_friend),
                     'target_friends' => implode(',', $source_friend)
                 ));
-                $linked_data = $params['need_set_linked_data'] ? array('friend_id' => $user_target) : null;
+                $linked_data = $params['linked_data'] ?? null;
                 $worker = $this->APIAsync(
                     array('execute', array('code' => $vk_script_code)),
                     $params['result_stack'],
@@ -311,18 +318,44 @@ class Program {
      *
      * @param array[int]    $user_source_friends    ID пользователей-источников (от которых нужно строить цепочки рукопожатий).
      * @param int           $user_target            ID целевого пользователя (к которому нужно строить цепочку рукопожатий).
+     * @param array         $original_params        Дополнительные параметры:
+     *                                                  - array[Worker] workers         Список воркеров,
+     *                                                  - array         result_stack    Shared stack,
+     *                                                  - array         linked_data     Привязанные к запросу дополнительные данные.
+     */
+    private function buildFifthOrderChains($user_source_friends, $user_target, $original_params)
+    {
+        $user_target_friends = $this->getFriends($user_target);
+        $user_target_friends = $this->filteringDeletedUser($user_target_friends);
+
+        foreach ($user_target_friends as $target_friend) {
+            $params = $original_params;
+            if (array_key_exists('linked_data', $params)) {
+                array_push($params['linked_data'], $target_friend);
+            } else {
+                $params['linked_data'] = array($target_friend);
+            }
+            $this->buildFourthOrderChains($user_source_friends, $target_friend, $params);
+        }
+    }
+
+    /**
+     * Построение цепочки шестого порядка.
+     *
+     * @param array[int]    $user_source_friends    ID пользователей-источников (от которых нужно строить цепочки рукопожатий).
+     * @param int           $user_target            ID целевого пользователя (к которому нужно строить цепочку рукопожатий).
      * @param array         $params                 Дополнительные параметры:
      *                                                  - array[Worker] workers         список воркеров,
      *                                                  - array         result_stack    shared stack.
      */
-    private function buildFifthOrderChains($user_source_friends, $user_target, $params) {
+    private function buildSixthOrderChains($user_source_friends, $user_target, $params)
+    {
         $user_target_friends = $this->getFriends($user_target);
         $user_target_friends = $this->filteringDeletedUser($user_target_friends);
 
-        $params['need_set_linked_data'] = true;
-
         foreach ($user_target_friends as $target_friend) {
-            $this->buildFourthOrderChains($user_source_friends, $target_friend, $params);
+            $params['linked_data'] = array($target_friend);
+            $this->buildFifthOrderChains($user_source_friends, $target_friend, $params);
         }
     }
 
@@ -487,6 +520,18 @@ class Program {
                 $this->setChains(array($fifth_order_chain));
             } else {
                 $this->setChains($fifth_order_chain);
+            }
+            return;
+        }
+
+        // Цепочка шестого порядка: проверяем, имеют ли друзья друзей пользователя-источника общих друзей с друзьями друзей целевого пользователя.
+        $sixth_order_chain = $this->buildChainsCommon($this->user_source, $this->user_target, 6);
+        if (count($sixth_order_chain) != 0) {
+            if ($this->mode == 'random_chain') {
+                $sixth_order_chain = $sixth_order_chain[array_rand($sixth_order_chain)];
+                $this->setChains(array($sixth_order_chain));
+            } else {
+                $this->setChains($sixth_order_chain);
             }
             return;
         }

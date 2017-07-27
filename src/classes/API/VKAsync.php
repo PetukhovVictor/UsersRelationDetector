@@ -29,9 +29,11 @@ class VKAsync extends Thread {
     /**
      * VKAsync constructor. Во время инициализации также происходит запуск потока (выхов метода start).
      *
-     * @param $vk VK Инстанс объекта VK API.
-     * @param $api_args array Аргументы для выполнения запроса к VK API: название метода и параметры.
-     * @param $shared_array Threaded Объект, представляющий из себя разделяемую память, в который будет записан результат выполнения запроса.
+     * @param $vk           VK          Инстанс объекта VK API.
+     * @param $api_args     array       Аргументы для выполнения запроса к VK API: название метода и параметры.
+     * @param $shared_array Threaded    Объект, представляющий из себя разделяемую память,
+     *                                  в который будет записан результат выполнения запроса.
+     * @param $linked_data  array       Привязанные к запросу дополнительные данные.
      */
     public function __construct($vk, $api_args, $shared_array, $linked_data = null) {
         $this->vk = $vk;

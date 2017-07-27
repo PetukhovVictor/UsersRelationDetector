@@ -222,4 +222,23 @@ abstract class Helpers {
         }
         return $chains;
     }
+
+    /**
+     * Достраивание иерархии общих друзей заданным списком пользователей.
+     *
+     * @param   array $common_friends   Массив цепочек друзей.
+     * @param   array $users            Пользователи, дописываемые к левой части цепочек.
+     *
+     * @return  array                   Массив цепочек друзей с дописанными исходным и целевым пользователем.
+     */
+    static public function appendToCommonFriendsHierarchy(&$common_friends, &$users, $depth = 0) {
+        return array(
+            array(
+                'id' => $users[$depth],
+                'common_friends' => count($users) - 1 > $depth ?
+                    self::appendToCommonFriendsHierarchy($common_friends, $users, $depth + 1) :
+                    $common_friends
+            )
+        );
+    }
 }
