@@ -1,5 +1,9 @@
 <?
 
+require_once __DIR__ . '/../API/VKException.php';
+
+require_once __DIR__ . '/../Loger.php';
+
 /**
  * Class VKAsync - реализует асинхронное выполнение запросов к VK API и запись результата в разделяемую память (Threaded).
  */
@@ -51,25 +55,13 @@ class VKAsync extends Thread {
     public function run() {
         $vk = $this->vk;
 
-        $start_time = time();
+        $loger = new Loger();
+        $loger->start();
+
         $result = call_user_func_array(array($vk, 'api'), $this->api_args);
-        $time = time() - $start_time;
+        $loger->end()->print($this->api_args);
 
-        $log_args = array();
-        foreach ($this->api_args[1] as $param => $value) {
-            $param_info = array($param, strlen($value) > 10 ? substr($value, 0, 10) . '...' : $value);
-            array_push($log_args, implode(' = ', $param_info));
-        }
-        $log_args = implode(', ', $log_args);
-
-        echo "{$this->api_args[0]}: $log_args" . PHP_EOL;
-        echo "Time: " . round($time % 60) . " s." . PHP_EOL . PHP_EOL;
-
-        if (!isset($result['response']) && isset($result['error'])) {
-            throw new Exception("Error code {$result['error']['error_code']}: {$result['error']['error_msg']}");
-        } elseif (!isset($result['response'])) {
-            throw new Exception("Unknown error.");
-        }
+        \VK\VKException::checkResult($result);
 
         $result = array(
             'data' => $result['response']

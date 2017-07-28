@@ -2,8 +2,10 @@
 
 require_once __DIR__ . '/../API/VK.php';
 require_once __DIR__ . '/../API/VKAsync.php';
+require_once __DIR__ . '/../API/VKException.php';
 
 require_once __DIR__ . '/../Utils.php';
+require_once __DIR__ . '/../Loger.php';
 
 require_once __DIR__ . '/Helpers.php';
 
@@ -16,14 +18,14 @@ class Program {
     const API_CALL_INTERVAL = 400000;
 
     /**
-     * Размер 'порции' пользователей, которой дозволено оперировать при работе с получением информации о пользователях через VK API.
+     * Максимальный размер 'порции' пользователей, информацию о которых можно получить через VK API.
      *
      * @type int
      */
     const USERS_CHUNK_SIZE = 300;
 
     /**
-     * Размер 'порции' друзей, которой дозволено оперировать при работе с получением общих друзей через VK API.
+     * Максимальный размер 'порции' пользователей, общих друзей которых можно запросить через VK API.
      *
      * @type int
      */
@@ -128,13 +130,12 @@ class Program {
     {
         usleep(self::API_CALL_INTERVAL);
         $vk = $this->vk;
+        $loger = new \Loger();
+        $loger->start();
         $result = call_user_func_array(array($vk, 'api'), func_get_args());
+        $loger->end()->print(func_get_args());
 
-        if (!isset($result['response']) && isset($result['error'])) {
-            throw new \Exception("Error code {$result['error']['error_code']}: {$result['error']['error_msg']}");
-        } elseif (!isset($result['response'])) {
-            throw new \Exception("Unknown error.");
-        }
+        \VK\VKException::checkResult($result);
 
         return $result['response'];
     }
@@ -203,6 +204,9 @@ class Program {
      */
     private function buildChains($user_source, $user_target, $order)
     {
+
+        file_put_contents("log.txt", "------------ $order порядок ------------" . PHP_EOL . PHP_EOL, FILE_APPEND);
+
         /*
          * Цепочки второго порядка строятся синхронными запросами (это просто проверка общих друзей) -
          * поэтому запускаем метод и сразу же возвращаем результат.
