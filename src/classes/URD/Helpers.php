@@ -226,10 +226,11 @@ abstract class Helpers {
     /**
      * Достраивание иерархии общих друзей заданным списком пользователей.
      *
-     * @param   array $common_friends   Массив цепочек друзей.
-     * @param   array $users            Пользователи, дописываемые к левой части цепочек.
+     * @param   array $common_friends   Текущая иерархия друзей.
+     * @param   array $users            Пользователи, на основе которых нужно достроить иерархию.
+     * @param   int $depth              Текущий уровень иерархии друзей (глубина рекурсии).
      *
-     * @return  array                   Массив цепочек друзей с дописанными исходным и целевым пользователем.
+     * @return  array                   Достроенная заданными пользователями иерархия друзей.
      */
     static public function appendToCommonFriendsHierarchy(&$common_friends, &$users, $depth = 0) {
         return array(
@@ -240,5 +241,20 @@ abstract class Helpers {
                     $common_friends
             )
         );
+    }
+
+    /**
+     * Добавление элемента в список привязанных к воркеру данных.
+     *
+     * @param   array $current_linked_data  Текущий набор привязанных к воркеру данных.
+     * @param   mixed $item                 Дописываемый элемент.
+     *
+     * @return  array                       Новый набор привязанных к воркеру данных.
+     */
+    static public function appendItemInLinkedData($current_linked_data, $item) {
+        $linked_data = $current_linked_data ?? array();
+        array_push($linked_data, $item);
+
+        return $linked_data;
     }
 }
