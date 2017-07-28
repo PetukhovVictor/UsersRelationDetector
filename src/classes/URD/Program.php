@@ -441,7 +441,7 @@ class Program {
      */
     public function getChains()
     {
-        return $this->chains;
+        return $this->chains ?? array();
     }
 
     /**
@@ -451,7 +451,7 @@ class Program {
      */
     public function getChainLength()
     {
-        return $this->chain_length;
+        return $this->chain_length ?? 0;
     }
 
     /**
