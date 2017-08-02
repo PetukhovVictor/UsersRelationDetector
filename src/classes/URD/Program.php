@@ -9,6 +9,11 @@ require_once __DIR__ . '/../Loger.php';
 
 require_once __DIR__ . '/Helpers.php';
 
+/**
+ * Class Program - построение цепочек друзей между двумя пользователями.
+ *
+ * @package URD
+ */
 class Program {
     /**
      * Минимальный интервал между вызовами методов VK API (поставлено исходя из ограничения: макс. 3 в секунду).
@@ -103,14 +108,14 @@ class Program {
     /**
      * Конструктор.
      *
-     * @param   array $app          Данные VK-приложения, которое будет использоваться для запросов к API.
-     * @param   int $user_source    ID пользователя-источника (от которого нужно строить цепочку рукопожатий).
-     * @param   int $user_target    ID целевого пользователя (к которому нужно строить цепочку рукопожатий).
-     * @param   array $option       Дополнительные опции.
+     * @param   \VK $vk_api_instance    Ссылка на объект, предоставляющий функционал для работы с VK API.
+     * @param   int $user_source        ID пользователя-источника (от которого нужно строить цепочку рукопожатий).
+     * @param   int $user_target        ID целевого пользователя (к которому нужно строить цепочку рукопожатий).
+     * @param   array $option           Дополнительные опции.
      */
-    public function __construct($user_source, $user_target, $app, $option = null)
+    public function __construct($user_source, $user_target, $vk_api_instance, $option = null)
     {
-        $this->vk = new \VK($app['id'], $app['secret'], $app['access_token']);
+        $this->vk = $vk_api_instance;
         $this->user_source = $user_source;
         $this->user_target = $user_target;
         $this->mode = $option['mode'] ?? 'random_chain';

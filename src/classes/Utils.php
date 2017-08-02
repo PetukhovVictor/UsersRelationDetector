@@ -99,4 +99,21 @@ abstract class Utils {
             $worker->join();
         }
     }
+
+    static public function createDaemon($return_value = null) {
+        $pid = pcntl_fork();
+        if ($pid < 0) {
+            echo 'Fork failed' . PHP_EOL;
+            die;
+        } else if ($pid > 0) {
+            if ($return_value) {
+                echo $return_value;
+            }
+            die;
+        }
+        $sid = posix_setsid();
+        if ($sid < 0) {
+            die;
+        }
+    }
 }
