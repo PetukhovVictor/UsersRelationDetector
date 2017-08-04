@@ -12,14 +12,25 @@ require_once __DIR__ . '/Program.php';
  */
 final class Manager extends \Jobber {
     /**
-     * Идентификатор приложения ВКонтакте, через которое будут осуществляться запросы к API.
+     * Логин пользователя ВКонтакте, от имени которого будет производиться выполнение запросов к API.
      */
-    const APP_ID = 0;
+    const VK_LOGIN = '+79199015140';
+
+    /**
+     * Пароль пользователя ВКонтакте, от имени которого будет производиться выполнение запросов к API.
+     */
+    const VK_PASSWORD = '53DumdSeV6RLVv';
+
+    /**
+     * Идентификатор приложения ВКонтакте, через которое будут осуществляться запросы к API.
+     * На данный момент используется APP_ID и APP_SECRET приложения Windows Phone (т. к. для него доступна прямая авторизация).
+     */
+    const APP_ID = 3697615;
 
     /**
      * Secret приложения ВКонтакте, через которое будут осуществляться запросы к API.
      */
-    const APP_SECRET = '';
+    const APP_SECRET = 'AlVXZFMUqyrnABp8ncuU';
 
     /**
      * Ссылка на объект, предоставляющий функционал для работы с VK API.
@@ -38,14 +49,60 @@ final class Manager extends \Jobber {
     /**
      * Конструктор.
      *
-     * @param   string              $access_token   Токен для доступа к VK API.
      * @param   [string => mixed]   $program_params Ассоциативный массив с параметрами программы.
+     * @param   string              $access_token   Токен для доступа к VK API (если не передаётся, используется прямая авторизация).
      */
-    public function __construct($access_token, $program_params)
+    public function __construct($program_params, $access_token = null)
     {
-        $this->program_params = $program_params;
-        $this->vk = new \VK(self::APP_ID, self::APP_SECRET, $access_token);
         parent::__construct();
+        $this->program_params = $program_params;
+        $this->vk = new \VK(self::APP_ID, self::APP_SECRET);
+        if ($access_token) {
+            $this->vk->setAccessToken($access_token);
+        } else {
+            $this->vkAuth();
+            $this->vk->setAccessTokenErrorInterceptor(array($this, 'accessTokenErrorIntercept'));
+        }
+    }
+
+    /**
+     * Перехватчик ошибок авторизации при выполнении запросов к API.
+     * Перехватчик инициирует повторную авторизацию.
+     *
+     * @return bool Флаг, указывающий на необходимость повторить запрос к API,
+     *              на котором возникла ошибка неалидного access token.
+     */
+    public function accessTokenErrorIntercept()
+    {
+        $this->vkAuth(true);
+        return true;
+    }
+
+    /**
+     * Принудительная авторизация приложения ВКонтакте.
+     *
+     * @return string   Новый access token.
+     */
+    private function vkAuthForce() {
+        $access_token_info = $this->vk->getAccessTokenByCredentials(self::VK_LOGIN, self::VK_PASSWORD);
+        $access_token = $access_token_info['access_token'];
+        $this->memcacheD->set('vk_access_token', $access_token);
+        return $access_token;
+    }
+
+    /**
+     * Авторизация приложения ВКонтакте для выполнения запросов к API.
+     * Используется прямая авторизация (с указанием логина и пароля) с помощью специального пользователя.
+     *
+     * @param   boolean $force  Флаг, указывающий на необходимость принудительной авторизации
+     *                          (без использования закэшированного access token).
+     */
+    private function vkAuth($force = false)
+    {
+        $access_token = $force ?
+            $this->vkAuthForce() :
+            $this->memcacheD->get('vk_access_token') ?? $this->vkAuthForce();
+        $this->vk->setAccessToken($access_token);
     }
 
     /**

@@ -33,6 +33,12 @@ class VK
     private $access_token;
 
     /**
+     * Interceptor for access token errors.
+     * @var callable
+     */
+    private $access_token_error_interceptor;
+
+    /**
      * Authorization status.
      * @var bool
      */
@@ -40,13 +46,14 @@ class VK
 
     const AUTHORIZE_URL = 'https://oauth.vk.com/authorize';
     const ACCESS_TOKEN_URL = 'https://oauth.vk.com/access_token';
+    const AUTH_FAILED_ERROR_CODE = 5;
 
     /**
      * Constructor.
      * @param   string $app_id
      * @param   string $api_secret
      * @param   string $access_token
-     * @throws  VKException
+     * @throws  VK\VKException
      */
     public function __construct($app_id, $api_secret, $access_token = null)
     {
@@ -68,12 +75,22 @@ class VK
     /**
      * Set Access Token.
      * @param   string $access_token
-     * @throws  VKException
+     * @throws  VK\VKException
      * @return  void
      */
     public function setAccessToken($access_token)
     {
         $this->access_token = $access_token;
+    }
+
+    /**
+     * Set Interceptor for Access token errors.
+     * @param   callable $callback
+     * @return  void
+     */
+    public function setAccessTokenErrorInterceptor($callback)
+    {
+        $this->access_token_error_interceptor = $callback;
     }
 
     /**
@@ -111,36 +128,68 @@ class VK
     }
 
     /**
-     * Returns access token by code received on authorization link.
-     * @param   string $code
-     * @param   string $callback_url
-     * @throws  VKException
+     * Returns access token.
+     * @param   array $auth_parameters
+     * @throws  VK\VKException
      * @return  array
      */
-    public function getAccessToken($code, $callback_url = 'https://api.vk.com/blank.html')
+    private function getAccessToken($auth_parameters)
     {
         if (!is_null($this->access_token) && $this->auth) {
-            throw new VKException('Already authorized.');
+            throw new VK\VKException('Already authorized.');
         }
 
         $parameters = array(
             'client_id' => $this->app_id,
-            'client_secret' => $this->api_secret,
-            'code' => $code,
-            'redirect_uri' => $callback_url
+            'client_secret' => $this->api_secret
         );
+
+        $parameters += $auth_parameters;
 
         $rs = json_decode($this->request(
             $this->createUrl(self::ACCESS_TOKEN_URL, $parameters)), true);
 
         if (isset($rs['error'])) {
-            throw new VKException($rs['error'] .
+            throw new VK\VKException($rs['error'] .
                 (!isset($rs['error_description']) ?: ': ' . $rs['error_description']));
         } else {
             $this->auth = true;
             $this->access_token = $rs['access_token'];
             return $rs;
         }
+    }
+
+    /**
+     * Returns access token by code received on authorization link.
+     * @param   string $code
+     * @param   string $callback_url
+     * @throws  VK\VKException
+     * @return  array
+     */
+    public function getAccessTokenByCode($code, $callback_url = 'https://api.vk.com/blank.html') {
+        return $this->getAccessToken(
+            array(
+                'code' => $code,
+                'redirect_uri' => $callback_url
+            )
+        );
+    }
+
+    /**
+     * Returns access token by credentials (auth direct).
+     * @param   string $login
+     * @param   string $password
+     * @throws  VK\VKException
+     * @return  array
+     */
+    public function getAccessTokenByCredentials($login, $password) {
+        return $this->getAccessToken(
+            array(
+                'grant_type' => 'password',
+                'username' => $login,
+                'password' => $password
+            )
+        );
     }
 
     /**
@@ -176,6 +225,8 @@ class VK
      */
     public function api($method, $parameters = array(), $format = 'array', $requestMethod = 'get')
     {
+        $_args = func_get_args();
+
         $parameters['timestamp'] = time();
         $parameters['api_id'] = $this->app_id;
         $parameters['random'] = rand(0, 10000);
@@ -205,7 +256,17 @@ class VK
             $rs = $this->request($this->createUrl(
                 $this->getApiUrl($method, $format == 'array' ? 'json' : $format), $parameters));
         }
-        return $format == 'array' ? json_decode($rs, true) : $rs;
+        $output = $format == 'array' ? json_decode($rs, true) : $rs;
+        $error_intercept_cond = $this->access_token_error_interceptor &&
+            isset($output['error']) &&
+            $output['error']['error_code'] === self::AUTH_FAILED_ERROR_CODE;
+        if ($error_intercept_cond) {
+            $this->auth = false;
+            $is_repeat = call_user_func($this->access_token_error_interceptor, $output['error']);
+            return $is_repeat ? call_user_func_array(array($this, 'api'), $_args) : $output;
+        } else {
+            return $output;
+        }
     }
 
     /**

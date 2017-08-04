@@ -104,7 +104,7 @@ abstract class Jobber extends MemcacheConnector {
      *
      * @return int Идентификатор Job'ы.
      */
-    public function getJobNumber() {
+    public function getJobId() {
         return $this->job_id;
     }
 }

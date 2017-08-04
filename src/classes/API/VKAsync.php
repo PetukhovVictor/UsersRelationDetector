@@ -39,7 +39,7 @@ class VKAsync extends Thread {
      *                                  в который будет записан результат выполнения запроса.
      * @param $linked_data  array       Привязанные к запросу дополнительные данные.
      */
-    public function __construct($vk, $api_args, $shared_array, $linked_data = null) {
+    public function __construct(&$vk, $api_args, $shared_array, $linked_data = null) {
         $this->vk = $vk;
         $this->shared_array = $shared_array;
         $this->linked_data = $linked_data;
