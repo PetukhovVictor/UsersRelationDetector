@@ -2,7 +2,7 @@
 
 require_once __DIR__ . '/../API/VKException.php';
 
-require_once __DIR__ . '/../URD/QueryManager.php';
+require_once __DIR__ . '/../QueryManager.php';
 
 require_once __DIR__ . '/../Loger.php';
 
@@ -66,7 +66,7 @@ class VKAsync extends Thread {
 
         $result = array('data' => $result['response']);
 
-        (new \URD\QueryManager())->cacheResult((object)$result, $api_args);
+        (new QueryManager())->cacheResult((object)$result, $api_args);
 
         if ($this->linked_data !== null) {
             $result['linked_data'] = (array)$this->linked_data;

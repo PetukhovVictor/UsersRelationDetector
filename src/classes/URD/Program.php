@@ -4,11 +4,11 @@ require_once __DIR__ . '/../API/VK.php';
 require_once __DIR__ . '/../API/VKAsync.php';
 require_once __DIR__ . '/../API/VKException.php';
 
-require_once __DIR__ . '/../Utils.php';
 require_once __DIR__ . '/../Loger.php';
+require_once __DIR__ . '/../QueryManager.php';
+require_once __DIR__ . '/../Utils.php';
 
 require_once __DIR__ . '/Helpers.php';
-require_once __DIR__ . '/QueryManager.php';
 
 /**
  * Class Program - построение цепочек друзей между двумя пользователями.
@@ -68,7 +68,7 @@ class Program {
     /**
      * Ссылка на объект, предоставляющий функционал для работы с запросами (очередь выполнения и кэширование).
      *
-     * @type QueryManager
+     * @type \QueryManager
      */
     private $qm;
 
@@ -110,7 +110,7 @@ class Program {
      */
     public function __construct($user_source, $user_target, $vk_api_instance, $option = null)
     {
-        $this->qm = new QueryManager();
+        $this->qm = new \QueryManager();
         $this->vk = $vk_api_instance;
         $this->user_source = $user_source;
         $this->user_target = $user_target;

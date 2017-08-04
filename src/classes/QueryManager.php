@@ -1,7 +1,10 @@
-<? namespace URD;
+<?
 
-require_once __DIR__ . '/../MemcacheConnector.php';
+require_once __DIR__ . '/MemcacheConnector.php';
 
+/**
+ * Class QueryManager - класс, реализующий систему управления запросами к VK API (очередью и кэшированием).
+ */
 class QueryManager extends \MemcacheConnector {
     /**
      * Интервал между запросами в секундах (установлено исходя из ограничения VK API: макс. 3 в секунду).
