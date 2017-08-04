@@ -46,6 +46,16 @@ class Program {
     const COMMON_FRIENDS_CHUNK_SCRIPT_PATH = __DIR__ . '/../../scripts/commonFriends.vks';
 
     /**
+     * Флаг, соответствующий синхронному вызову VK API.
+     */
+    const SYNC_API = false;
+
+    /**
+     * Флаг, соответствующий асинхронному вызову VK API.
+     */
+    const ASYNC_API = true;
+
+    /**
      * Мапа порядков цепочек и методов для построения цепочек этих порядков.
      *
      * @type [int => string]
@@ -59,18 +69,11 @@ class Program {
     );
 
     /**
-     * Ссылка на объект, предоставляющий функционал для работы с VK API.
+     * Функция (callable), представляющая из себя вызов VK API.
      *
-     * @type \VK
+     * @type Callable
      */
-    private $vk;
-
-    /**
-     * Ссылка на объект, предоставляющий функционал для работы с запросами (очередь выполнения и кэширование).
-     *
-     * @type \QueryManager
-     */
-    private $qm;
+    private $api_call;
 
     /**
      * ID пользователя-источника (от которого нужно строить цепочку рукопожатий).
@@ -103,76 +106,27 @@ class Program {
     /**
      * Конструктор.
      *
-     * @param   \VK $vk_api_instance    Ссылка на объект, предоставляющий функционал для работы с VK API.
-     * @param   int $user_source        ID пользователя-источника (от которого нужно строить цепочку рукопожатий).
-     * @param   int $user_target        ID целевого пользователя (к которому нужно строить цепочку рукопожатий).
-     * @param   array $option           Дополнительные опции.
+     * @param   int         $user_source    ID пользователя-источника (от которого нужно строить цепочку рукопожатий).
+     * @param   int         $user_target    ID целевого пользователя (к которому нужно строить цепочку рукопожатий).
+     * @param   Callable    $api_call       Функция (callable), представляющая из себя вызов VK API.
+     * @param   array       $option         Дополнительные опции.
      */
-    public function __construct($user_source, $user_target, $vk_api_instance, $option = null)
+    public function __construct($user_source, $user_target, $api_call, $option = null)
     {
-        $this->qm = new \QueryManager();
-        $this->vk = $vk_api_instance;
         $this->user_source = $user_source;
         $this->user_target = $user_target;
+        $this->api_call = $api_call;
         $this->mode = $option['mode'] ?? 'random_chain';
         $this->mutual_friends_vk_script = file_get_contents(self::COMMON_FRIENDS_CHUNK_SCRIPT_PATH);
     }
 
     /**
-     * Метод-обертка для синхронного выполнения запросов к VK API.
+     * Метод-обёртка для вызова VK API.
      *
-     * Число аргументов - произвольное, в соответствии с заданным методом VK API (аргументы транслируются в него).
-     *
-     * @throws \Exception
-     *
-     * @return mixed Результат выполнения заданного запроса к VK API.
+     * @return mixed
      */
-    private function API()
-    {
-        $_args = func_get_args();
-        $cache_result = $this->qm->getResultFromCache($_args);
-        if ($cache_result) {
-            echo '--------------------' . PHP_EOL;
-            echo 'Кэш попадание (sync)!' . PHP_EOL;
-            echo '--------------------' . PHP_EOL;
-            return $cache_result;
-        }
-        $this->qm->wait();
-        $vk_api = array($this->vk, 'api');
-
-        $result = \Loger::runAndMeasure(function () use($vk_api, $_args) {
-             return call_user_func_array($vk_api, $_args);
-        }, $_args);
-
-        \VK\VKException::checkResult($result);
-
-        $response = $result['response'];
-        $this->qm->cacheResult($response, $_args);
-
-        return $response;
-    }
-
-    /**
-     * Метод-обертка для асинхронного выполнения запросов к VK API.
-     *
-     * @param   array       $api_args     Транслируемые в метод VK API аргументы.
-     * @param   \Threaded   $result_array Объект разделяемой памяти, в который будет производиться запись результата запроса.
-     * @param   array       $linked_data  Привязанные к запросу дополнительные данные.
-     *
-     * @return \VKAsync     Worker, представляющий из себя отдельный поток выполнения.
-     */
-    private function APIAsync($api_args, &$result_array, $linked_data = null)
-    {
-        $cache_result = $this->qm->getResultFromCache($api_args);
-        if ($cache_result) {
-            echo '--------------------' . PHP_EOL;
-            echo 'Кэш попадание (async)!' . PHP_EOL;
-            echo '--------------------' . PHP_EOL;
-            $result_array[] = $cache_result;
-            return null;
-        }
-        $this->qm->wait();
-        return new \VKAsync($this->vk, $api_args, $result_array, $linked_data);
+    private function api() {
+        return call_user_func_array($this->api_call, func_get_args());
     }
 
     /**
@@ -191,9 +145,10 @@ class Program {
 
         $users_filtered = array();
         foreach($users_chunked as $users_chunk) {
-            $worker = $this->APIAsync(
+            $worker = $this->api(
+                self::ASYNC_API,
                 array('users.get', array('user_ids' => implode(',', $users_chunk))),
-                $result_shared_object
+                array('result_array' => $result_shared_object)
             );
             array_push($workers, $worker);
         }
@@ -348,10 +303,10 @@ class Program {
                     'target_friends' => implode(',', $source_friend)
                 ));
                 $linked_data = $params['linked_data'] ?? null;
-                $worker = $this->APIAsync(
+                $worker = $this->api(
+                    self::ASYNC_API,
                     array('execute', array('code' => $vk_script_code)),
-                    $params['result_shared_object'],
-                    $linked_data
+                    array('result_array' => $params['result_shared_object'], 'linked_data' => $linked_data)
                 );
                 array_push($params['workers'], $worker);
             }
@@ -409,9 +364,10 @@ class Program {
      */
     private function getFriends($user_id)
     {
-        return $this->API('friends.get', array(
-            'user_id' => $user_id
-        ));
+        return $this->api(
+            self::SYNC_API,
+            array('friends.get', array('user_id' => $user_id))
+        );
     }
 
     /**
@@ -449,18 +405,22 @@ class Program {
         }
 
         if ($result_array === null) {
-            return $this->API('friends.getMutual', array(
-                'source_uid' => $user_source,
-                $target_property_name => $users_target
-            ));
-        } else {
-            return $this->APIAsync(array(
-                'friends.getMutual',
+            return $this->api(
+                self::SYNC_API,
                 array(
-                    'source_uid' => $user_source,
-                    $target_property_name => $users_target
+                    'friends.getMutual',
+                    array('source_uid' => $user_source, $target_property_name => $users_target)
                 )
-            ), $result_array);
+            );
+        } else {
+            return $this->api(
+                self::ASYNC_API,
+                array(
+                    'friends.getMutual',
+                    array('source_uid' => $user_source, $target_property_name => $users_target)
+                ),
+                array('result_array' => $result_array)
+            );
         }
     }
 

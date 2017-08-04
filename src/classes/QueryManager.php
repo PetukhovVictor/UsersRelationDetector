@@ -37,12 +37,19 @@ class QueryManager extends \MemcacheConnector {
     /**
      * Получение текущей временной метки с точностью до микросекунд.
      *
-     * @return float
+     * @return float Текущая временная метка
      */
     private function getTime() {
         return microtime(true);
     }
 
+    /**
+     * Получение результата запроса из кэша.
+     *
+     * @param array $args   Аргументы запросы, уникально его идентифицирующие.
+     *
+     * @return mixed        Результат запроса, либо FALSE в случае кэш-промаха.
+     */
     public function getResultFromCache($args)
     {
         $hash_query = md5(print_r($args, 1));
@@ -51,6 +58,12 @@ class QueryManager extends \MemcacheConnector {
         return $this->memcacheD->get($mc_key);
     }
 
+    /**
+     * Кэширование результата запроса.
+     *
+     * @param mixed $result     Результат запроса.
+     * @param array $args       Аргументы запросы, уникально его идентифицирующие.
+     */
     public function cacheResult($result, $args)
     {
         $hash_query = md5(print_r($args, 1));

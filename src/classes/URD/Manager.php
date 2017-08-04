@@ -47,6 +47,13 @@ final class Manager extends \Jobber {
     private $program_params;
 
     /**
+     * Ссылка на объект, предоставляющий функционал для работы с запросами (очередь выполнения и кэширование).
+     *
+     * @type \QueryManager
+     */
+    private $qm;
+
+    /**
      * Конструктор.
      *
      * @param   [string => mixed]   $program_params Ассоциативный массив с параметрами программы.
@@ -57,6 +64,7 @@ final class Manager extends \Jobber {
         parent::__construct();
         $this->program_params = $program_params;
         $this->vk = new \VK(self::APP_ID, self::APP_SECRET);
+        $this->qm = new \QueryManager();
         if ($access_token) {
             $this->vk->setAccessToken($access_token);
         } else {
@@ -106,6 +114,68 @@ final class Manager extends \Jobber {
     }
 
     /**
+     * Вызов VK API.
+     *
+     * @param boolean   $is_async           Флаг, указывающий на асинхронность вызова.
+     * @param array     $api_args           Аргументы VK API (метод + параметры).
+     * @param array     $async_api_params   Дополнительные параметры для асинхронного вызова VK API.
+     *
+     * @return mixed|\VKAsync               Либо результат выполнения запроса (синхронное выполнение),
+     *                                      либо воркер (асинхронное выполнение), либо закэшированный результат.
+     */
+    public function vkApiCall($is_async, $api_args, $async_api_params = null)
+    {
+        $cache_result = $this->qm->getResultFromCache($api_args);
+        if ($cache_result) {
+            if ($is_async) {
+                $async_api_params['result_array'][] = $cache_result;
+                $cache_result = null;
+            }
+            return $cache_result;
+        }
+        $this->qm->wait();
+        return $is_async ?
+            $this->vkApiCallAsync($api_args, $async_api_params) :
+            $this->vkApiCallSync($api_args);
+    }
+
+    /**
+     * Синхронный вызов VK API.
+     *
+     * @param array $api_args   Аргументы VK API (метод + параметры).
+     *
+     * @return mixed
+     */
+    private function vkApiCallSync($api_args)
+    {
+        $vk_api = array($this->vk, 'api');
+
+        $result = \Loger::runAndMeasure(function () use($vk_api, $api_args) {
+            return call_user_func_array($vk_api, $api_args);
+        }, $api_args);
+
+        \VK\VKException::checkResult($result);
+
+        $response = $result['response'];
+        $this->qm->cacheResult($response, $api_args);
+
+        return $response;
+    }
+
+    /**
+     * Асинхронный вызов VK API.
+     *
+     * @param array $api_args   Аргументы VK API (метод + параметры).
+     * @param array $params     Дополнительные параметры, необходимые для асинхронного вызова VK API.
+     *
+     * @return \VKAsync         Воркер, осуществляющий асинхронное выполнение запроса.
+     */
+    private function vkApiCallAsync($api_args, $params)
+    {
+        return new \VKAsync($this->vk, $api_args, $params['result_array'], $params['linked_data'] ?? null);
+    }
+
+    /**
      * Запуск программы.
      * Помимо запуска здесь создаём Job'у, делаем замеры времени работы и записываем результаты в in-memory базу.
      */
@@ -125,7 +195,7 @@ final class Manager extends \Jobber {
         $urd = new Program(
             $this->program_params['user_source'],
             $this->program_params['user_target'],
-            $this->vk,
+            array($this, 'vkApiCall'),
             array(
                 'mode' => $this->program_params['mode']
             )
