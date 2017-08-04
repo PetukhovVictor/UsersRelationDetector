@@ -27,4 +27,12 @@ abstract class MemcacheConnector {
         $this->memcacheD = new Memcached();
         $this->memcacheD->addServer(self::MEMCACHED_HOST, self::MEMCACHED_PORT);
     }
+
+    /**
+     * Закрытие соединения с memcached-сервером.
+     */
+    protected function close()
+    {
+        $this->memcacheD->quit();
+    }
 }

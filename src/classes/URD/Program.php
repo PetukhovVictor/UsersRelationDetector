@@ -32,7 +32,7 @@ class Program {
     const FRIENDS_CHUNK_SIZE = 100;
 
     /**
-     * Максимальное количество запросов к VK API, выполняемых в коде VKScript.
+     * Максимальное количество запросов к VK API, выполняемых в коде VKScript (через метод execute).
      *
      * @type int
      */
@@ -66,7 +66,7 @@ class Program {
     private $vk;
 
     /**
-     * Ссылка на объект, предоставляющий функционал для работы с запросами (очереди выполнения и пр.).
+     * Ссылка на объект, предоставляющий функционал для работы с запросами (очередь выполнения и кэширование).
      *
      * @type QueryManager
      */
@@ -101,13 +101,6 @@ class Program {
     private $mode;
 
     /**
-     * Длина цепочки из друзей, проложенной от одного пользователя к другому (количество рукопожатий).
-     *
-     * @type int
-     */
-    private $chain_length;
-
-    /**
      * Конструктор.
      *
      * @param   \VK $vk_api_instance    Ссылка на объект, предоставляющий функционал для работы с VK API.
@@ -126,7 +119,7 @@ class Program {
     }
 
     /**
-     * Метод-обертка для выполнения запросов к VK API.
+     * Метод-обертка для синхронного выполнения запросов к VK API.
      *
      * Число аргументов - произвольное, в соответствии с заданным методом VK API (аргументы транслируются в него).
      *
@@ -136,16 +129,27 @@ class Program {
      */
     private function API()
     {
+        $_args = func_get_args();
+        $cache_result = $this->qm->getResultFromCache($_args);
+        if ($cache_result) {
+            echo '--------------------' . PHP_EOL;
+            echo 'Кэш попадание (sync)!' . PHP_EOL;
+            echo '--------------------' . PHP_EOL;
+            return $cache_result;
+        }
         $this->qm->wait();
-        $vk = $this->vk;
-        $loger = new \Loger();
-        $loger->start();
-        $result = call_user_func_array(array($vk, 'api'), func_get_args());
-        $loger->end()->print(func_get_args());
+        $vk_api = array($this->vk, 'api');
+
+        $result = \Loger::runAndMeasure(function () use($vk_api, $_args) {
+             return call_user_func_array($vk_api, $_args);
+        }, $_args);
 
         \VK\VKException::checkResult($result);
 
-        return $result['response'];
+        $response = $result['response'];
+        $this->qm->cacheResult($response, $_args);
+
+        return $response;
     }
 
     /**
@@ -157,8 +161,16 @@ class Program {
      *
      * @return \VKAsync     Worker, представляющий из себя отдельный поток выполнения.
      */
-    private function APIAsync($api_args, $result_array, $linked_data = null)
+    private function APIAsync($api_args, &$result_array, $linked_data = null)
     {
+        $cache_result = $this->qm->getResultFromCache($api_args);
+        if ($cache_result) {
+            echo '--------------------' . PHP_EOL;
+            echo 'Кэш попадание (async)!' . PHP_EOL;
+            echo '--------------------' . PHP_EOL;
+            $result_array[] = $cache_result;
+            return null;
+        }
         $this->qm->wait();
         return new \VKAsync($this->vk, $api_args, $result_array, $linked_data);
     }
@@ -212,9 +224,6 @@ class Program {
      */
     private function buildChains($user_source, $user_target, $order)
     {
-
-        file_put_contents("log.txt", "------------ $order порядок ------------" . PHP_EOL . PHP_EOL, FILE_APPEND);
-
         /*
          * Цепочки второго порядка строятся синхронными запросами (это просто проверка общих друзей) -
          * поэтому запускаем метод и сразу же возвращаем результат.
@@ -290,8 +299,8 @@ class Program {
         $chains = array();
 
         foreach ($common_friends as $mutual_friend) {
-            $chain = Helpers::addEndpointUsers(array($mutual_friend), array($user_source), array($user_target));
-            array_push($chains, $chain);
+            $chain = Helpers::addEndpointUsers(array(array('id' . $mutual_friend)), array($user_source), array($user_target));
+            array_push($chains, $chain[0]);
         }
 
         return $chains;
@@ -463,7 +472,6 @@ class Program {
     private function setChains($users)
     {
         $this->chains = $users;
-        $this->chain_length = count($users) - 1;
     }
 
     /**
@@ -474,16 +482,6 @@ class Program {
     public function getChains()
     {
         return $this->chains ?? array();
-    }
-
-    /**
-     * Получение длины цепочки.
-     *
-     * @return int    Длина цепочки друзей.
-     */
-    public function getChainLength()
-    {
-        return $this->chain_length ?? 0;
     }
 
     /**

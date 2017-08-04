@@ -2,6 +2,8 @@
 
 require_once __DIR__ . '/../API/VKException.php';
 
+require_once __DIR__ . '/../URD/QueryManager.php';
+
 require_once __DIR__ . '/../Loger.php';
 
 /**
@@ -53,19 +55,19 @@ class VKAsync extends Thread {
      * @throws Exception
      */
     public function run() {
-        $vk = $this->vk;
+        $api_args = $this->api_args;
+        $vk_api = array($this->vk, 'api');
 
-        $loger = new Loger();
-        $loger->start();
-
-        $result = call_user_func_array(array($vk, 'api'), $this->api_args);
-        $loger->end()->print($this->api_args);
+        $result = \Loger::runAndMeasure(function () use($vk_api, $api_args) {
+            return call_user_func_array($vk_api, $api_args);
+        }, $api_args);
 
         \VK\VKException::checkResult($result);
 
-        $result = array(
-            'data' => $result['response']
-        );
+        $result = array('data' => $result['response']);
+
+        (new \URD\QueryManager())->cacheResult((object)$result, $api_args);
+
         if ($this->linked_data !== null) {
             $result['linked_data'] = (array)$this->linked_data;
         }

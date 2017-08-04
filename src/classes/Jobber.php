@@ -23,6 +23,11 @@ abstract class Jobber extends MemcacheConnector {
     const JOB_DEFAULT_NUMBER = 1;
 
     /**
+     * Ключ в memcache-хранилище для счетчик заданий.
+     */
+    const JOB_COUNTER_MEMCACHE_KEY = 'job_counter';
+
+    /**
      * Время жизни конечного результата в in-memory базе (в секундах).
      */
     const RESULT_TTL = 600;
@@ -55,13 +60,13 @@ abstract class Jobber extends MemcacheConnector {
     protected function createJob()
     {
         do {
-            $job_item = $this->memcacheD->get('job_counter', null, Memcached::GET_EXTENDED);
+            $job_item = $this->memcacheD->get(self::JOB_COUNTER_MEMCACHE_KEY, null, Memcached::GET_EXTENDED);
             if (!$job_item) {
                 $job_id = self::JOB_DEFAULT_NUMBER;
-                $this->memcacheD->add('job_counter', $job_id);
+                $this->memcacheD->add(self::JOB_COUNTER_MEMCACHE_KEY, $job_id);
             } else {
                 $job_id = $job_item['value'] > self::JOB_MAX_NUMBER ? self::JOB_DEFAULT_NUMBER : $job_item['value'] + 1;
-                $this->memcacheD->cas($job_item['cas'], 'job_counter', $job_id);
+                $this->memcacheD->cas($job_item['cas'], self::JOB_COUNTER_MEMCACHE_KEY, $job_id);
             }
         } while ($this->memcacheD->getResultCode() != \Memcached::RES_SUCCESS);
 

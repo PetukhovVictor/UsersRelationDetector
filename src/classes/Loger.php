@@ -15,17 +15,29 @@ class Loger {
 
     static private $args_key_value_separator = ' = ';
 
-    public function start() {
+    static public function runAndMeasure($callback, $args = null)
+    {
+        $loger = new self;
+        $loger->start();
+        $result = $callback();
+        $loger->end()->print($args);
+        return $result;
+    }
+
+    public function start()
+    {
         $this->start_time = time();
         return $this;
     }
 
-    public function end() {
+    public function end()
+    {
         $this->end_time = time() - $this->start_time;
         return $this;
     }
 
-    public function print($args = null) {
+    public function print($args = null)
+    {
         $log_args = array();
 
         if (!is_null($args)) {
@@ -39,10 +51,10 @@ class Loger {
             }
             $log_args = implode(self::$args_separator, $log_args);
 
-            file_put_contents("log.txt", "{$args[0]}: $log_args" . PHP_EOL, FILE_APPEND);
+            echo "{$args[0]}: $log_args" . PHP_EOL;
         }
 
-        file_put_contents("log.txt", md5(print_r($args, 1)) . PHP_EOL . PHP_EOL, FILE_APPEND);
-        echo "Time: " . round($this->end_time % 60) . " s." . PHP_EOL;
+        echo md5(print_r($args, 1)) . PHP_EOL;
+        echo "Time: " . round($this->end_time % 60) . " s." . PHP_EOL . PHP_EOL;
     }
 }

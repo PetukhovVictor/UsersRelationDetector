@@ -96,7 +96,9 @@ abstract class Utils {
 
     static public function workersSync($workers) {
         foreach ($workers as $worker) {
-            $worker->join();
+            if ($worker) {
+                $worker->join();
+            }
         }
     }
 
