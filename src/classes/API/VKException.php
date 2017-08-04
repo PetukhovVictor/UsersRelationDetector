@@ -24,4 +24,3 @@ class VKException extends \Exception {
         }
     }
 }
-

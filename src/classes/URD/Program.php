@@ -8,6 +8,7 @@ require_once __DIR__ . '/../Utils.php';
 require_once __DIR__ . '/../Loger.php';
 
 require_once __DIR__ . '/Helpers.php';
+require_once __DIR__ . '/QueryManager.php';
 
 /**
  * Class Program - построение цепочек друзей между двумя пользователями.
@@ -15,12 +16,6 @@ require_once __DIR__ . '/Helpers.php';
  * @package URD
  */
 class Program {
-    /**
-     * Минимальный интервал между вызовами методов VK API (поставлено исходя из ограничения: макс. 3 в секунду).
-     *
-     * @type int
-     */
-    const API_CALL_INTERVAL = 400000;
 
     /**
      * Максимальный размер 'порции' пользователей, информацию о которых можно получить через VK API.
@@ -71,6 +66,13 @@ class Program {
     private $vk;
 
     /**
+     * Ссылка на объект, предоставляющий функционал для работы с запросами (очереди выполнения и пр.).
+     *
+     * @type QueryManager
+     */
+    private $qm;
+
+    /**
      * ID пользователя-источника (от которого нужно строить цепочку рукопожатий).
      *
      * @type int
@@ -115,6 +117,7 @@ class Program {
      */
     public function __construct($user_source, $user_target, $vk_api_instance, $option = null)
     {
+        $this->qm = new QueryManager();
         $this->vk = $vk_api_instance;
         $this->user_source = $user_source;
         $this->user_target = $user_target;
@@ -133,7 +136,7 @@ class Program {
      */
     private function API()
     {
-        usleep(self::API_CALL_INTERVAL);
+        $this->qm->wait();
         $vk = $this->vk;
         $loger = new \Loger();
         $loger->start();
@@ -156,7 +159,7 @@ class Program {
      */
     private function APIAsync($api_args, $result_array, $linked_data = null)
     {
-        usleep(self::API_CALL_INTERVAL);
+        $this->qm->wait();
         return new \VKAsync($this->vk, $api_args, $result_array, $linked_data);
     }
 
