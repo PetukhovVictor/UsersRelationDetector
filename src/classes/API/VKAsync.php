@@ -4,7 +4,7 @@ require_once __DIR__ . '/../API/VKException.php';
 
 require_once __DIR__ . '/../QueryManager.php';
 
-require_once __DIR__ . '/../Loger.php';
+require_once __DIR__ . '/../Profiler.php';
 
 /**
  * Class VKAsync - реализует асинхронное выполнение запросов к VK API и запись результата в разделяемую память (Threaded).
@@ -19,6 +19,13 @@ class VKAsync extends Thread {
      * @var array Аргументы для выполнения запроса к VK API: название метода и параметры.
      */
     private $api_args;
+
+    /**
+     * Идентиикатор задания, в рамках которого выполняется запрос.
+     *
+     * @type int
+     */
+    private $job_id;
 
     /**
      * @var Threaded Объект, представляющий из себя разделяемую память, в который будет записан результат выполнения запроса.
@@ -36,13 +43,15 @@ class VKAsync extends Thread {
      * VKAsync constructor. Во время инициализации также происходит запуск потока (выхов метода start).
      *
      * @param $vk           VK          Инстанс объекта VK API.
+     * @param $job_id       int         Идентиикатор задания, в рамках которого выполняется запрос.
      * @param $api_args     array       Аргументы для выполнения запроса к VK API: название метода и параметры.
      * @param $shared_array Threaded    Объект, представляющий из себя разделяемую память,
      *                                  в который будет записан результат выполнения запроса.
      * @param $linked_data  array       Привязанные к запросу дополнительные данные.
      */
-    public function __construct(&$vk, $api_args, $shared_array, $linked_data = null) {
+    public function __construct(&$vk, $job_id, $api_args, $shared_array, $linked_data = null) {
         $this->vk = $vk;
+        $this->job_id = $job_id;
         $this->shared_array = $shared_array;
         $this->linked_data = $linked_data;
         $this->api_args = (array)$api_args;
@@ -57,10 +66,14 @@ class VKAsync extends Thread {
     public function run() {
         $api_args = $this->api_args;
         $vk_api = array($this->vk, 'api');
+        $vk_api_method = $api_args[0];
 
-        $result = \Loger::runAndMeasure(function () use($vk_api, $api_args) {
+        $profiler_data = \Profiler::run(function () use($vk_api, $api_args) {
             return call_user_func_array($vk_api, $api_args);
-        }, $api_args);
+        });
+        $result = $profiler_data['result'];
+        $metrics = $profiler_data['metrics'];
+        \Profiler::write($this->job_id, $vk_api_method, $metrics);
 
         \VK\VKException::checkResult($result);
 

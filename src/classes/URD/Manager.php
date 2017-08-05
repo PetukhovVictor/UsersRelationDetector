@@ -1,7 +1,12 @@
 <? namespace URD;
 
-require_once __DIR__ . '/../Utils.php';
+require_once __DIR__ . '/../API/VK.php';
+require_once __DIR__ . '/../API/VKAsync.php';
+require_once __DIR__ . '/../API/VKException.php';
+
 require_once __DIR__ . '/../Jobber.php';
+require_once __DIR__ . '/../Profiler.php';
+require_once __DIR__ . '/../Utils.php';
 
 require_once __DIR__ . '/Program.php';
 
@@ -149,10 +154,14 @@ final class Manager extends \Jobber {
     private function vkApiCallSync($api_args)
     {
         $vk_api = array($this->vk, 'api');
+        $vk_api_method = $api_args[0];
 
-        $result = \Loger::runAndMeasure(function () use($vk_api, $api_args) {
+        $profiler_data = \Profiler::run(function() use($vk_api, $api_args) {
             return call_user_func_array($vk_api, $api_args);
-        }, $api_args);
+        });
+        $result = $profiler_data['result'];
+        $metrics = $profiler_data['metrics'];
+        \Profiler::write($this->job_id, $vk_api_method, $metrics, $this->memcacheD);
 
         \VK\VKException::checkResult($result);
 
@@ -172,7 +181,7 @@ final class Manager extends \Jobber {
      */
     private function vkApiCallAsync($api_args, $params)
     {
-        return new \VKAsync($this->vk, $api_args, $params['result_array'], $params['linked_data'] ?? null);
+        return new \VKAsync($this->vk, $this->job_id, $api_args, $params['result_array'], $params['linked_data'] ?? null);
     }
 
     /**

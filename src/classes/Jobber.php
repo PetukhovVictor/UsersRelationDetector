@@ -47,7 +47,7 @@ abstract class Jobber extends MemcacheConnector {
     /**
      * Конструктор.
      */
-    protected function __construct()
+    public function __construct()
     {
         parent::__construct();
     }
@@ -83,11 +83,22 @@ abstract class Jobber extends MemcacheConnector {
      * @param int   $time       Время выполнения.
      */
     protected function recordResult($job_id, $data, $time = null) {
-        $this->memcacheD->set("job_{$job_id}_result", array(
-            'progress'  => 100,
-            'data'      => $data,
-            'time'      => $time
-        ), self::RESULT_TTL);
+        do {
+            $job_item_info = $this->memcacheD->get("job_{$job_id}_result", null, Memcached::GET_EXTENDED);
+            if (!$job_item_info) {
+                $this->memcacheD->add("job_{$job_id}_result", array(
+                    'progress'  => 100,
+                    'data'      => $data,
+                    'time'      => $time
+                ));
+            } else {
+                $job_data = $job_item_info['value'];
+                $job_data['progress'] = 100;
+                $job_data['data'] = $data;
+                $job_data['time'] = $time;
+                $this->memcacheD->cas($job_item_info['cas'], "job_{$job_id}_result", $job_data, self::RESULT_TTL);
+            }
+        } while ($this->memcacheD->getResultCode() != \Memcached::RES_SUCCESS);
     }
 
     /**
@@ -98,10 +109,20 @@ abstract class Jobber extends MemcacheConnector {
      * @param mixed     $data       Данные (промежуточный результат выполнения Job'ы).
      */
     protected function recordIntermediateResult($job_id, $progress, $data) {
-        $this->memcacheD->set("job_{$job_id}_result", array(
-            'progress'  => $progress,
-            'data'      => $data
-        ), self::INTERMEDIATE_RESULT_TTL);
+        do {
+            $job_item_info = $this->memcacheD->get("job_{$job_id}_result", null, Memcached::GET_EXTENDED);
+            if (!$job_item_info) {
+                $this->memcacheD->add("job_{$job_id}_result", array(
+                    'progress'  => $progress,
+                    'data'      => $data
+                ));
+            } else {
+                $job_data = $job_item_info['value'];
+                $job_data['progress'] = $progress;
+                $job_data['data'] = $data;
+                $this->memcacheD->cas($job_item_info['cas'], "job_{$job_id}_result", $job_data, self::INTERMEDIATE_RESULT_TTL);
+            }
+        } while ($this->memcacheD->getResultCode() != \Memcached::RES_SUCCESS);
     }
 
     /**

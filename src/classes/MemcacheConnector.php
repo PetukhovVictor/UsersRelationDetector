@@ -3,7 +3,7 @@
 /**
  * Class MemcacheConnector - коннектор к memcache-серверу.
  */
-abstract class MemcacheConnector {
+class MemcacheConnector {
     /**
      * Хост memcache-сервера.
      */
@@ -22,10 +22,14 @@ abstract class MemcacheConnector {
     /**
      * Конструктор.
      */
-    protected function __construct()
+    public function __construct()
     {
         $this->memcacheD = new Memcached();
         $this->memcacheD->addServer(self::MEMCACHED_HOST, self::MEMCACHED_PORT);
+    }
+
+    public function getInstance() {
+        return $this->memcacheD;
     }
 
     /**

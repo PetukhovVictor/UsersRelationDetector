@@ -1,11 +1,5 @@
 <? namespace URD;
 
-require_once __DIR__ . '/../API/VK.php';
-require_once __DIR__ . '/../API/VKAsync.php';
-require_once __DIR__ . '/../API/VKException.php';
-
-require_once __DIR__ . '/../Loger.php';
-require_once __DIR__ . '/../QueryManager.php';
 require_once __DIR__ . '/../Utils.php';
 
 require_once __DIR__ . '/Helpers.php';
