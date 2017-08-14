@@ -2,9 +2,7 @@
 
 require_once __DIR__ . '/MemcacheConnector.php';
 
-$hashes = array();
-
-abstract class Profiler {
+class Profiler extends MemcacheConnector {
     const ARGS_SYMBOLS_LIMIT = 100;
 
     const SPREAD_SYMBOL = '...';
@@ -17,13 +15,20 @@ abstract class Profiler {
         return microtime(true);
     }
 
-    static public function run($command)
+    public function __construct()
+    {
+        parent::__construct();
+    }
+
+    public function run($command)
     {
         $start_time = self::getTime();
         $result = $command();
         $end_time = self::getTime() - $start_time;
-        // Используем PHP serializer (т. к. он же используется в memcached для нескалярных типов).
+        // Используем PHP serializer для определения размера (т. к. он же используется в memcached для нескалярных типов).
         $result_size = strlen(serialize($result['response']));
+
+        echo 'End. ' . $end_time . PHP_EOL;
 
         return array(
             'result'    => $result,
@@ -34,7 +39,7 @@ abstract class Profiler {
         );
     }
 
-    static private function addMetricsData($current_metrics, $type, $metrics) {
+    private function addMetricsData($current_metrics, $type, $metrics) {
         $default_metrics_data = array(
             'queries_count'     => 1,
             'times_sum'         => $metrics['time'],
@@ -43,7 +48,7 @@ abstract class Profiler {
 
         if (!$current_metrics) {
             $current_metrics = array($type => $default_metrics_data);
-        } else if (!$current_metrics[$type]) {
+        } else if (!isset($current_metrics[$type])) {
             $current_metrics[$type] = $default_metrics_data;
         } else {
             $current_metrics[$type]['queries_count']++;
@@ -53,24 +58,17 @@ abstract class Profiler {
         return $current_metrics;
     }
 
-    static public function write($job_id, $type, $metrics, $mc = null)
+    public function write($job_id, $type, $metrics)
     {
-        if (!$mc) {
-            $mc = (new MemcacheConnector())->getInstance();
-        }
         do {
-            $job_item_info = $mc->get("job_{$job_id}_result", null, Memcached::GET_EXTENDED);
+            $job_item_info = $this->memcacheD->get("job_{$job_id}_result", null, Memcached::GET_EXTENDED);
             $job_data = $job_item_info['value'];
-            $job_data['metrics'] = self::addMetricsData($job_data['metrics'], $type, $metrics);
-            $mc->cas($job_item_info['cas'], "job_{$job_id}_result", $job_data);
-        } while ($mc->getResultCode() != \Memcached::RES_SUCCESS);
-
-        print_r($job_data['metrics']);
-        echo 'Job: ' . $job_id;
-        echo PHP_EOL;
+            $job_data['metrics'] = $this->addMetricsData($job_data['metrics'] ?? null, $type, $metrics);
+            $this->memcacheD->cas($job_item_info['cas'], "job_{$job_id}_result", $job_data);
+        } while ($this->memcacheD->getResultCode() != \Memcached::RES_SUCCESS);
     }
 
-    static public function print($args = null, $end_time)
+    public function print($args = null, $end_time)
     {
         $log_args = array();
 

@@ -40,6 +40,13 @@ class VKAsync extends Thread {
     private $linked_data;
 
     /**
+     * Ссылка на объект, предоставляющий функционал для профилирования запросов.
+     *
+     * @type \Profiler
+     */
+    private $profiler;
+
+    /**
      * VKAsync constructor. Во время инициализации также происходит запуск потока (выхов метода start).
      *
      * @param $vk           VK          Инстанс объекта VK API.
@@ -64,22 +71,25 @@ class VKAsync extends Thread {
      * @throws Exception
      */
     public function run() {
+        $profiler = new Profiler();
+        $query_manager = new QueryManager();
+
         $api_args = $this->api_args;
         $vk_api = array($this->vk, 'api');
         $vk_api_method = $api_args[0];
 
-        $profiler_data = \Profiler::run(function () use($vk_api, $api_args) {
+        $profiler_data = $profiler->run(function () use($vk_api, $api_args) {
             return call_user_func_array($vk_api, $api_args);
         });
         $result = $profiler_data['result'];
         $metrics = $profiler_data['metrics'];
-        \Profiler::write($this->job_id, $vk_api_method, $metrics);
+        $profiler->write($this->job_id, $vk_api_method, $metrics);
 
         \VK\VKException::checkResult($result);
 
         $result = array('data' => $result['response']);
 
-        (new QueryManager())->cacheResult((object)$result, $api_args);
+        $query_manager->cacheResult((object)$result, $api_args);
 
         if ($this->linked_data !== null) {
             $result['linked_data'] = (array)$this->linked_data;

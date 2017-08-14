@@ -59,6 +59,13 @@ final class Manager extends \Jobber {
     private $qm;
 
     /**
+     * Ссылка на объект, предоставляющий функционал для профилирования запросов.
+     *
+     * @type \Profiler
+     */
+    private $profiler;
+
+    /**
      * Конструктор.
      *
      * @param   [string => mixed]   $program_params Ассоциативный массив с параметрами программы.
@@ -70,6 +77,7 @@ final class Manager extends \Jobber {
         $this->program_params = $program_params;
         $this->vk = new \VK(self::APP_ID, self::APP_SECRET);
         $this->qm = new \QueryManager();
+        $this->profiler = new \Profiler();
         if ($access_token) {
             $this->vk->setAccessToken($access_token);
         } else {
@@ -156,12 +164,12 @@ final class Manager extends \Jobber {
         $vk_api = array($this->vk, 'api');
         $vk_api_method = $api_args[0];
 
-        $profiler_data = \Profiler::run(function() use($vk_api, $api_args) {
+        $profiler_data = $this->profiler->run(function() use($vk_api, $api_args) {
             return call_user_func_array($vk_api, $api_args);
         });
         $result = $profiler_data['result'];
         $metrics = $profiler_data['metrics'];
-        \Profiler::write($this->job_id, $vk_api_method, $metrics, $this->memcacheD);
+        $this->profiler->write($this->job_id, $vk_api_method, $metrics);
 
         \VK\VKException::checkResult($result);
 
